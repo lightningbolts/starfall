@@ -51,6 +51,12 @@ export interface StartMatchMessage {
   type: "StartMatch";
   /** Fill empty seats with AI so one human can start alone. */
   botCount?: number;
+  /** Override bot difficulty (default: soft ladder). */
+  difficulty?: "easy" | "normal" | "hard";
+  /** Map density preset. */
+  mapSize?: "small" | "medium" | "large";
+  /** Watch bots only — requester becomes an omniscient spectator. */
+  spectator?: boolean;
 }
 
 export interface LobbyUpdateMessage {
@@ -82,6 +88,8 @@ export interface MatchStartMessage {
   >;
   roundTicks: number;
   view: PlayerView;
+  /** True when the client is watching bots, not commanding. */
+  spectator?: boolean;
 }
 
 /** C→S: player action (identity stamped server-side). */

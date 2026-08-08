@@ -16,14 +16,16 @@ export interface RoleBalance {
   garrisonPerLevel: number;
   upgradeBaseCost: number;
   incomeMode: "bank" | "cargo" | "none";
-  /** Primary output scale: exponential growth−1 per level (0.2 → ×1.2^L). */
+  /** Linear per-level fraction of base (0.2 → +20% of base each level). */
   creditLevelFactor: number;
   popLevelFactor: number;
   popCapLevelFactor: number;
-  /** Soft exponential on garrison base (plus flat garrisonPerLevel). */
+  /** Unused for garrison (flat garrisonPerLevel only); kept for role parity. */
   garrisonLevelFactor: number;
   cargoLevelFactor: number;
   buildProgressLevelFactor: number;
+  /** Concurrent build slots per level (shipyard). 0 = no builds. */
+  buildSlotsPerLevel: number;
 }
 
 export interface BalanceTable {
@@ -32,6 +34,12 @@ export interface BalanceTable {
   ticksPerSecond: number;
   roundTicks: number;
   upgradeGrowth: number;
+  /** Levels that still use exponential cost growth; after this, cost is flat. */
+  upgradeGrowthLevels: number;
+  /** Soft RPS penalty when a ship type faces its counter (composition-weighted). */
+  matchupPenalty: number;
+  /** Max queued build orders ≈ slots × this. */
+  buildQueueDepthPerSlot: number;
   visionBaseHops: number;
   surveyDronesBonusHops: number;
   homeworldFighterBuildTicksFactor: number;
@@ -71,8 +79,11 @@ export const DEFAULT_BALANCE: BalanceTable = {
   turnIntervalMs: 100,
   ticksPerSecond: 10,
   roundTicks: 12_000,
-  // Soft exponential: L2=base, L5≈1.8×base, L10≈5.5×base (was 1.5 → L10≈38×).
+  // Soft exponential through upgradeGrowthLevels, then flat.
   upgradeGrowth: 1.22,
+  upgradeGrowthLevels: 5,
+  matchupPenalty: 0.85,
+  buildQueueDepthPerSlot: 8,
   visionBaseHops: 1,
   surveyDronesBonusHops: 1,
   homeworldFighterBuildTicksFactor: 2,
@@ -84,7 +95,7 @@ export const DEFAULT_BALANCE: BalanceTable = {
   ships: {
     fighter: {
       creditCost: 10,
-      power: 10,
+      power: 12,
       buildTicks: 20,
       ticksPerHop: 20,
     },
@@ -96,7 +107,7 @@ export const DEFAULT_BALANCE: BalanceTable = {
     },
     battleship: {
       creditCost: 120,
-      power: 120,
+      power: 90,
       buildTicks: 160,
       ticksPerHop: 80,
       requiresTech: "heavy_warships",
@@ -115,9 +126,10 @@ export const DEFAULT_BALANCE: BalanceTable = {
       creditLevelFactor: 0.2,
       popLevelFactor: 0.15,
       popCapLevelFactor: 0.12,
-      garrisonLevelFactor: 0.1,
+      garrisonLevelFactor: 0,
       cargoLevelFactor: 0,
       buildProgressLevelFactor: 0,
+      buildSlotsPerLevel: 0,
     },
     core_world: {
       creditsPerPulse: 2,
@@ -130,9 +142,10 @@ export const DEFAULT_BALANCE: BalanceTable = {
       creditLevelFactor: 0.12,
       popLevelFactor: 0.22,
       popCapLevelFactor: 0.18,
-      garrisonLevelFactor: 0.08,
+      garrisonLevelFactor: 0,
       cargoLevelFactor: 0,
       buildProgressLevelFactor: 0,
+      buildSlotsPerLevel: 0,
     },
     resource: {
       creditsPerPulse: 4,
@@ -145,9 +158,10 @@ export const DEFAULT_BALANCE: BalanceTable = {
       creditLevelFactor: 0,
       popLevelFactor: 0,
       popCapLevelFactor: 0,
-      garrisonLevelFactor: 0.08,
+      garrisonLevelFactor: 0,
       cargoLevelFactor: 0.25,
       buildProgressLevelFactor: 0,
+      buildSlotsPerLevel: 0,
     },
     shipyard: {
       creditsPerPulse: 2,
@@ -160,9 +174,10 @@ export const DEFAULT_BALANCE: BalanceTable = {
       creditLevelFactor: 0.12,
       popLevelFactor: 0,
       popCapLevelFactor: 0,
-      garrisonLevelFactor: 0.08,
+      garrisonLevelFactor: 0,
       cargoLevelFactor: 0,
       buildProgressLevelFactor: 0.2,
+      buildSlotsPerLevel: 1,
     },
     relay: {
       creditsPerPulse: 0,
@@ -175,9 +190,10 @@ export const DEFAULT_BALANCE: BalanceTable = {
       creditLevelFactor: 0,
       popLevelFactor: 0,
       popCapLevelFactor: 0,
-      garrisonLevelFactor: 0.1,
+      garrisonLevelFactor: 0,
       cargoLevelFactor: 0,
       buildProgressLevelFactor: 0,
+      buildSlotsPerLevel: 0,
     },
     relic: {
       creditsPerPulse: 10,
@@ -190,9 +206,10 @@ export const DEFAULT_BALANCE: BalanceTable = {
       creditLevelFactor: 0,
       popLevelFactor: 0,
       popCapLevelFactor: 0,
-      garrisonLevelFactor: 0.1,
+      garrisonLevelFactor: 0,
       cargoLevelFactor: 0.22,
       buildProgressLevelFactor: 0,
+      buildSlotsPerLevel: 0,
     },
   },
   start: { credits: 80, population: 25, fighters: 5 },

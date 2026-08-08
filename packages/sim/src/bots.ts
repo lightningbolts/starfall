@@ -596,3 +596,10 @@ const DIFFICULTIES: BotDifficulty[] = [
 export function policyForBotIndex(i: number): BotDifficulty {
   return DIFFICULTIES[i % DIFFICULTIES.length]!;
 }
+
+export function resolveBotPolicy(
+  i: number,
+  override?: BotDifficulty | null,
+): BotDifficulty {
+  return override ?? policyForBotIndex(i);
+}

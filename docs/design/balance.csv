@@ -6,9 +6,13 @@ pacing,round_minutes_default,20,min,band 15-30
 pacing,round_ticks,12000,ticks,20*60*10
 pacing,target_players,100,count,band 50-100
 pacing,target_nodes,250,count,band 150-300
-upgrade,growth,1.22,multiplier,cost(n)=base*growth^(n-1) soft exponential uncapped
-upgrade,effect_model,exponential,enum,outputs use (1+factor)^(level-1); factors are growth-1
+upgrade,growth,1.22,multiplier,cost soft exponential then flat after growth_levels
+upgrade,growth_levels,5,level,exponential through L5→L6 then flat
+upgrade,effect_model,linear,enum,outputs use base+base*factor*(level-1)
 upgrade,max_level,0,level,0 means uncapped
+combat,matchup_penalty,0.85,multiplier,soft RPS when facing counter type
+role.shipyard,build_slots_per_level,1,slots,concurrent builds = level
+build,queue_depth_per_slot,8,orders,max queue depth = slots*8
 upgrade,visual_size_softcap_level,12,level,radius stops growing past this level
 vision,base_hops,1,hops,from each owned node
 vision,survey_drones_bonus_hops,1,hops,
@@ -37,7 +41,7 @@ tech.rapid_deployment,tier,3,tier,
 tech.rapid_deployment,build_ticks_factor,0.75,multiplier,-25% build ticks
 tech.relic_scanning,tier,3,tier,reveal all relic nodes
 ship.fighter,credit_cost,10,credits,
-ship.fighter,power,10,power,
+ship.fighter,power,12,power,1.2 power/credit
 ship.fighter,build_ticks,20,ticks,2.0s
 ship.fighter,ticks_per_hop,20,ticks,2.0s per hop
 ship.cruiser,credit_cost,40,credits,
@@ -45,7 +49,7 @@ ship.cruiser,power,40,power,
 ship.cruiser,build_ticks,60,ticks,6.0s
 ship.cruiser,ticks_per_hop,40,ticks,4.0s per hop
 ship.battleship,credit_cost,120,credits,
-ship.battleship,power,120,power,
+ship.battleship,power,90,power,0.75 power/credit
 ship.battleship,build_ticks,160,ticks,16.0s
 ship.battleship,ticks_per_hop,80,ticks,8.0s per hop
 ship.battleship,requires_tech,heavy_warships,tech_id,
@@ -79,7 +83,7 @@ role.resource,upgrade_base_cost,20,credits,
 role.resource,cargo_level_factor,0.25,growth-1,×1.25^level
 role.resource,garrison_level_factor,0.08,growth-1,
 role.shipyard,credits_per_pulse,2,credits,
-role.shipyard,build_slots,1,slots,level 1
+role.shipyard,build_slots,1,slots,L1; scales with level via build_slots_per_level
 role.shipyard,garrison_base,25,population,
 role.shipyard,garrison_per_level,6,population,
 role.shipyard,upgrade_base_cost,30,credits,

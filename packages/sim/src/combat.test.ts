@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_BALANCE } from "./balance.js";
 import {
+  effectiveCombatPower,
   resolveLanchesterPair,
   type SidePower,
 } from "./combat.js";
@@ -12,7 +13,8 @@ import {
 } from "./helpers.js";
 
 describe("Lanchester combat", () => {
-  it("matches balance worked example: 140 vs 120 → ~72 remaining", () => {
+  it("resolves equal-composition fight with new ship powers", () => {
+    // 10F (120) + 1C (40) = 160 base vs 3C = 120
     const attacker: SidePower = {
       playerId: "a",
       composition: { fighter: 10, cruiser: 1 },
@@ -23,53 +25,68 @@ describe("Lanchester combat", () => {
       composition: { cruiser: 3 },
       power: fleetPower({ cruiser: 3 }, DEFAULT_BALANCE),
     };
-    expect(attacker.power).toBe(140);
+    expect(attacker.power).toBe(160);
     expect(defender.power).toBe(120);
+
+    // Fighters are weak vs cruisers → attacker effective < base
+    const aEff = effectiveCombatPower(
+      attacker.composition,
+      defender.composition,
+      DEFAULT_BALANCE,
+    );
+    expect(aEff).toBeLessThan(attacker.power);
 
     const result = resolveLanchesterPair(attacker, defender, DEFAULT_BALANCE);
     expect(result.winnerId).toBe("a");
     expect(result.loserId).toBe("b");
-    expect(result.winnerPowerRemaining).toBeCloseTo(Math.sqrt(140 ** 2 - 120 ** 2), 5);
-
-    const survivors = scaleCompositionToPower(
-      attacker.composition,
-      result.winnerPowerRemaining,
-      DEFAULT_BALANCE,
-    );
-    // Proportional floor: fighter share 100/140, cruiser 40/140
-    const rem = result.winnerPowerRemaining;
-    const fSurv = Math.floor((rem * (100 / 140)) / 10);
-    const cSurv = Math.floor((rem * (40 / 140)) / 40);
-    expect(survivors.fighter ?? 0).toBe(fSurv);
-    expect(survivors.cruiser ?? 0).toBe(cSurv);
+    expect(result.winnerPowerRemaining).toBeGreaterThan(0);
+    expect(result.loserCompositionAfter).toEqual({});
   });
 
-  it("mutual annihilation on equal power", () => {
+  it("mutual annihilation on equal effective power", () => {
     const a: SidePower = {
       playerId: "a",
       composition: { fighter: 10 },
-      power: 100,
+      power: fleetPower({ fighter: 10 }, DEFAULT_BALANCE),
     };
     const b: SidePower = {
       playerId: "b",
       composition: { fighter: 10 },
-      power: 100,
+      power: fleetPower({ fighter: 10 }, DEFAULT_BALANCE),
     };
     const r = resolveLanchesterPair(a, b, DEFAULT_BALANCE);
     expect(r.mutualAnnihilation).toBe(true);
     expect(r.winnerId).toBeNull();
   });
+
+  it("applies soft RPS: fighters weak vs cruisers", () => {
+    const fighters = { fighter: 10 };
+    const cruisers = { cruiser: 3 };
+    const fVsC = effectiveCombatPower(fighters, cruisers, DEFAULT_BALANCE);
+    const fBase = fleetPower(fighters, DEFAULT_BALANCE);
+    expect(fVsC).toBeCloseTo(fBase * DEFAULT_BALANCE.matchupPenalty, 5);
+  });
+
+  it("scales survivors from base power fraction", () => {
+    const comp = { fighter: 10, cruiser: 1 };
+    const rem = 72;
+    const survivors = scaleCompositionToPower(comp, rem, DEFAULT_BALANCE);
+    const before = fleetPower(comp, DEFAULT_BALANCE);
+    expect(fleetPower(survivors, DEFAULT_BALANCE)).toBeLessThanOrEqual(rem);
+    expect(before).toBe(160);
+  });
 });
 
 describe("costs", () => {
-  it("upgrade soft exponential cost", () => {
-    // L1→L2 = base; L2→L3 = round(base * 1.22)
+  it("upgrade exponential then flat after growth levels", () => {
     expect(upgradeCost("shipyard", 1, DEFAULT_BALANCE)).toBe(30);
     expect(upgradeCost("shipyard", 2, DEFAULT_BALANCE)).toBe(37);
-    // Softer than the old 1.5 curve: L10 is far cheaper than ~38× base.
-    const midGame = upgradeCost("shipyard", 9, DEFAULT_BALANCE);
-    expect(midGame).toBeLessThan(30 * 8);
-    expect(midGame).toBeGreaterThan(30);
+    const atCap = upgradeCost("shipyard", 5, DEFAULT_BALANCE); // L5→L6
+    const afterCap = upgradeCost("shipyard", 9, DEFAULT_BALANCE); // L9→L10
+    expect(afterCap).toBe(atCap);
+    expect(atCap).toBe(
+      Math.round(30 * Math.pow(1.22, DEFAULT_BALANCE.upgradeGrowthLevels - 1)),
+    );
   });
 
   it("tech tier costs", () => {

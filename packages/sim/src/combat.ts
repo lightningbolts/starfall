@@ -1,6 +1,7 @@
 import type { BalanceTable } from "./balance.js";
 import { fleetPower, scaleCompositionToPower } from "./helpers.js";
-import type { FleetComposition, PlayerId } from "./types.js";
+import type { FleetComposition, PlayerId, ShipType } from "./types.js";
+import { SHIP_TYPES } from "./types.js";
 
 export interface SidePower {
   playerId: PlayerId;
@@ -14,43 +15,109 @@ export interface PairwiseResult {
   winnerPowerBefore: number;
   loserPowerBefore: number;
   winnerPowerRemaining: number;
+  winnerCompositionBefore: FleetComposition;
+  loserCompositionBefore: FleetComposition;
   winnerCompositionAfter: FleetComposition;
+  loserCompositionAfter: FleetComposition;
   /** true if both destroyed */
   mutualAnnihilation: boolean;
 }
 
-/** Lanchester square law: P_remaining = sqrt(Pw² − Pl²). Tie → both die. */
+/** Soft RPS: each type is weak vs one counter. */
+export const WEAK_VS: Record<ShipType, ShipType> = {
+  fighter: "cruiser",
+  cruiser: "battleship",
+  battleship: "fighter",
+};
+
+/**
+ * Composition-weighted combat power: ships facing their counter type take
+ * `matchupPenalty` (default 0.85×) proportional to the opponent's counter share.
+ */
+export function effectiveCombatPower(
+  mine: FleetComposition,
+  theirs: FleetComposition,
+  balance: BalanceTable,
+): number {
+  const theirTotal = fleetPower(theirs, balance);
+  if (theirTotal <= 0) return fleetPower(mine, balance);
+
+  const penalty = balance.matchupPenalty;
+  let power = 0;
+  for (const t of SHIP_TYPES) {
+    const n = mine[t] ?? 0;
+    if (n <= 0) continue;
+    const base = n * balance.ships[t].power;
+    const weakVs = WEAK_VS[t];
+    const counterPower =
+      (theirs[weakVs] ?? 0) * balance.ships[weakVs].power;
+    const counterShare = counterPower / theirTotal;
+    const mult = 1 - (1 - penalty) * counterShare;
+    power += base * mult;
+  }
+  return power;
+}
+
+/** Diff ship counts (before − after), floored at 0. */
+export function compositionLosses(
+  before: FleetComposition,
+  after: FleetComposition,
+): FleetComposition {
+  const out: FleetComposition = {};
+  for (const t of SHIP_TYPES) {
+    const lost = (before[t] ?? 0) - (after[t] ?? 0);
+    if (lost > 0) out[t] = lost;
+  }
+  return out;
+}
+
+/** Lanchester square law on matchup-adjusted power. Tie → both die. */
 export function resolveLanchesterPair(
   a: SidePower,
   b: SidePower,
   balance: BalanceTable,
 ): PairwiseResult {
-  if (a.power === b.power) {
+  const aEff = effectiveCombatPower(a.composition, b.composition, balance);
+  const bEff = effectiveCombatPower(b.composition, a.composition, balance);
+
+  if (aEff === bEff) {
     return {
       winnerId: null,
       loserId: null,
-      winnerPowerBefore: a.power,
-      loserPowerBefore: b.power,
+      winnerPowerBefore: aEff,
+      loserPowerBefore: bEff,
       winnerPowerRemaining: 0,
+      winnerCompositionBefore: { ...a.composition },
+      loserCompositionBefore: { ...b.composition },
       winnerCompositionAfter: {},
+      loserCompositionAfter: {},
       mutualAnnihilation: true,
     };
   }
-  const winner = a.power > b.power ? a : b;
-  const loser = a.power > b.power ? b : a;
-  const remaining = Math.sqrt(winner.power ** 2 - loser.power ** 2);
+
+  const winner = aEff > bEff ? a : b;
+  const loser = aEff > bEff ? b : a;
+  const wEff = aEff > bEff ? aEff : bEff;
+  const lEff = aEff > bEff ? bEff : aEff;
+  const remainingEff = Math.sqrt(wEff ** 2 - lEff ** 2);
+  const winnerBase = fleetPower(winner.composition, balance);
+  const remainingBase = wEff > 0 ? (remainingEff / wEff) * winnerBase : 0;
   const survivors = scaleCompositionToPower(
     winner.composition,
-    remaining,
+    remainingBase,
     balance,
   );
+
   return {
     winnerId: winner.playerId,
     loserId: loser.playerId,
-    winnerPowerBefore: winner.power,
-    loserPowerBefore: loser.power,
-    winnerPowerRemaining: remaining,
+    winnerPowerBefore: wEff,
+    loserPowerBefore: lEff,
+    winnerPowerRemaining: fleetPower(survivors, balance),
+    winnerCompositionBefore: { ...winner.composition },
+    loserCompositionBefore: { ...loser.composition },
     winnerCompositionAfter: survivors,
+    loserCompositionAfter: {},
     mutualAnnihilation: false,
   };
 }

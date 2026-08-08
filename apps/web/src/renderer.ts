@@ -45,9 +45,9 @@ const ROLE_RADIUS: Record<string, number> = {
 };
 
 const SHIP_POWER: Record<string, number> = {
-  fighter: 10,
+  fighter: 12,
   cruiser: 40,
-  battleship: 120,
+  battleship: 90,
 };
 
 /**
@@ -68,6 +68,8 @@ export interface RenderState {
   seatColors: Record<PlayerId, string>;
   selfId: PlayerId;
   selectedNode: NodeId | null;
+  /** Multi-select fleets (own). */
+  selectedFleetIds: Set<string>;
   pathPreview: NodeId[];
   ownershipPulse: Map<NodeId, number>;
   /** Node level-up pulses, per visuals.md motion set. */
@@ -77,6 +79,8 @@ export interface RenderState {
   combatBursts?: { x: number; y: number }[];
   allies: Set<PlayerId>;
   showMinimap: boolean;
+  /** Hover power preview text (world coords). */
+  powerPreview?: { x: number; y: number; text: string } | null;
 }
 
 interface Star {
@@ -209,8 +213,12 @@ export class MapRenderer {
   }
 
   bindPanZoom(
-    onClick: (nodeId: NodeId | null, mods: { shift: boolean; alt: boolean }) => void,
+    onClick: (
+      nodeId: NodeId | null,
+      mods: { shift: boolean; alt: boolean; ctrl: boolean },
+    ) => void,
     onMinimapJump?: (world: Point) => void,
+    onRightClick?: () => void,
   ): void {
     this.canvas.addEventListener(
       "wheel",
@@ -276,11 +284,15 @@ export class MapRenderer {
       onClick(this.hitNode(world.x, world.y), {
         shift: e.shiftKey,
         alt: e.altKey,
+        ctrl: e.ctrlKey || e.metaKey,
       });
     });
 
-    // Right-click is used to clear a pending path; never show the menu.
-    this.canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+    // Right-click clears a pending path / selection staging.
+    this.canvas.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      onRightClick?.();
+    });
   }
 
   private layoutOf(id: NodeId, map: MatchStartMessage["map"]): Point {
@@ -518,6 +530,22 @@ export class MapRenderer {
 
     if (state.showMinimap) this.drawMinimap(state, w, h, visible);
     else this.minimapRect = null;
+
+    if (state.powerPreview) {
+      const scr = {
+        x: state.powerPreview.x * this.zoom + this.camX,
+        y: state.powerPreview.y * this.zoom + this.camY,
+      };
+      ctx.font = `600 13px "Source Sans 3", sans-serif`;
+      const tw = ctx.measureText(state.powerPreview.text).width;
+      const pad = 8;
+      ctx.fillStyle = "rgba(7,9,13,0.82)";
+      ctx.fillRect(scr.x - tw / 2 - pad, scr.y - 28, tw + pad * 2, 22);
+      ctx.fillStyle = PALETTE.text;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(state.powerPreview.text, scr.x, scr.y - 17);
+    }
 
     if (state.combatFlash > 0) {
       ctx.fillStyle = `rgba(245,242,234,${Math.min(0.06, state.combatFlash * 0.06)})`;
@@ -982,6 +1010,14 @@ export class MapRenderer {
         ctx.strokeStyle = "rgba(7,9,13,0.75)";
         ctx.lineWidth = size * 0.16;
         ctx.stroke();
+
+        if (state.selectedFleetIds?.has(f.id)) {
+          ctx.beginPath();
+          ctx.arc(0, 0, size * 1.55, 0, Math.PI * 2);
+          ctx.strokeStyle = PALETTE.self;
+          ctx.lineWidth = size * 0.22;
+          ctx.stroke();
+        }
 
         ctx.restore();
 

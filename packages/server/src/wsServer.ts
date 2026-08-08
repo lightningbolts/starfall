@@ -145,7 +145,12 @@ export function startServer(opts: ServerOptions = {}): {
         return;
       }
       if (msg.type === "StartMatch") {
-        room.startMatch(clientId, Math.min(msg.botCount, room.capacity - 1));
+        room.startMatch(clientId, {
+          botFill: Math.min(msg.botCount ?? 0, Math.max(0, room.capacity - 1)),
+          difficulty: msg.difficulty,
+          mapSize: msg.mapSize,
+          spectator: msg.spectator,
+        });
         return;
       }
       if (msg.type === "Intent") {

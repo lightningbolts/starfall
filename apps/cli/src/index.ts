@@ -7,8 +7,9 @@ import {
   formatTelemetrySummary,
   accumulateTelemetry,
   botIntents,
-  policyForBotIndex,
+  resolveBotPolicy,
   type BotBrain,
+  type BotDifficulty,
   type Turn,
 } from "@starfall/sim";
 
@@ -18,6 +19,7 @@ function parseArgs(argv: string[]) {
     players: number;
     ticks: number;
     nodes?: number;
+    difficulty?: BotDifficulty;
   } = {
     seed: 42,
     players: 8,
@@ -29,8 +31,11 @@ function parseArgs(argv: string[]) {
     else if (a === "--players") args.players = Number(argv[++i]);
     else if (a === "--ticks") args.ticks = Number(argv[++i]);
     else if (a === "--nodes") args.nodes = Number(argv[++i]);
-    else if (a === "--help") {
-      console.log(`Usage: starfall ffa [--seed N] [--players N] [--ticks N] [--nodes N]
+    else if (a === "--difficulty") {
+      const d = argv[++i];
+      if (d === "easy" || d === "normal" || d === "hard") args.difficulty = d;
+    } else if (a === "--help") {
+      console.log(`Usage: starfall ffa [--seed N] [--players N] [--ticks N] [--nodes N] [--difficulty easy|normal|hard]
   Default: seed=42 players=8 ticks=12000 (20 min)`);
       process.exit(0);
     }
@@ -51,12 +56,12 @@ function runFfa() {
   const brains: BotBrain[] = Array.from({ length: args.players }, (_, i) => ({
     playerId: `p${i}`,
     clientId: `c${i}`,
-    policy: policyForBotIndex(i),
+    policy: resolveBotPolicy(i, args.difficulty),
     seq: 0,
   }));
 
   console.log(
-    `Starfall FFA  seed=${args.seed} players=${args.players} ticks=${args.ticks} nodes=${Object.keys(state.map.nodes).length}`,
+    `Starfall FFA  seed=${args.seed} players=${args.players} ticks=${args.ticks} nodes=${Object.keys(state.map.nodes).length}${args.difficulty ? ` difficulty=${args.difficulty}` : ""}`,
   );
 
   const tel = createMatchTelemetry();

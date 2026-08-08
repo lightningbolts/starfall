@@ -58,12 +58,21 @@ export class NetClient {
     this.send({ type: "SetReady", ready });
   }
 
-  startMatch(botCount?: number): void {
-    this.send(
-      botCount === undefined
-        ? { type: "StartMatch" }
-        : { type: "StartMatch", botCount },
-    );
+  startMatch(
+    botCount?: number,
+    opts?: {
+      difficulty?: "easy" | "normal" | "hard";
+      mapSize?: "small" | "medium" | "large";
+      spectator?: boolean;
+    },
+  ): void {
+    this.send({
+      type: "StartMatch",
+      ...(botCount !== undefined ? { botCount } : {}),
+      ...(opts?.difficulty ? { difficulty: opts.difficulty } : {}),
+      ...(opts?.mapSize ? { mapSize: opts.mapSize } : {}),
+      ...(opts?.spectator ? { spectator: true } : {}),
+    });
   }
 
   intent(intent: Intent): void {

@@ -55,11 +55,17 @@ export {
   upgradeBoostLabel,
   levelScale,
   scaleByLevel,
+  buildSlots,
+  maxBuildQueueDepth,
+  buildTicksRequired,
 } from "./helpers.js";
 
 export {
   resolveLanchesterPair,
   resolveMultiSideCombat,
+  effectiveCombatPower,
+  compositionLosses,
+  WEAK_VS,
 } from "./combat.js";
 
 export { Game, type Execution } from "./game.js";
@@ -96,6 +102,7 @@ export {
 } from "./vision.js";
 export {
   buildPlayerView,
+  buildSpectatorView,
   createVisionMemory,
   isFoggedNode,
   diffPlayerView,
@@ -134,6 +141,7 @@ export {
 export {
   botIntents,
   policyForBotIndex,
+  resolveBotPolicy,
   type BotBrain,
   type BotPolicy,
   type BotDifficulty,

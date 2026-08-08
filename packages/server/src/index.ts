@@ -14,6 +14,13 @@ const ticksRaw = arg("ticks");
 const ticks = ticksRaw !== undefined ? Number(ticksRaw) : 0;
 const players = arg("players") ? Number(arg("players")) : undefined;
 const bots = arg("bots") ? Number(arg("bots")) : 0;
+const difficultyRaw = arg("difficulty");
+const difficulty =
+  difficultyRaw === "easy" ||
+  difficultyRaw === "normal" ||
+  difficultyRaw === "hard"
+    ? difficultyRaw
+    : undefined;
 const staticDir = arg("static");
 const telemetry = arg("telemetry");
 
@@ -23,6 +30,7 @@ const srv = startServer({
   roundTicks: ticks,
   capacity: players ?? 100,
   botCount: bots,
+  ...(difficulty ? { botDifficulty: difficulty } : {}),
   ...(staticDir ? { staticDir } : {}),
   ...(telemetry ? { telemetryPath: telemetry } : {}),
 });
@@ -33,6 +41,7 @@ console.log(`WebSocket: ws://localhost:${bound}/ws`);
 console.log(`Metrics: http://localhost:${bound}/metrics`);
 console.log(`Capacity: ${srv.room.capacity}`);
 if (bots > 0) console.log(`Bots: ${srv.room.botCount}`);
+if (difficulty) console.log(`Bot difficulty: ${difficulty}`);
 if (seed != null) console.log(`Seed: ${seed} (fixed)`);
 else console.log(`Seed: random each match`);
 if (ticks > 0) {

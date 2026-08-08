@@ -18,6 +18,8 @@ import {
   TECH_IDS,
   TECH_TIER,
   applyPlayerViewDelta,
+  buildSlots,
+  effectiveCombatPower,
   effectiveGarrison,
   empireProduction,
   fleetPower,
@@ -82,6 +84,26 @@ app.innerHTML = `
           <input id="name" maxlength="24" placeholder="Your name" autocomplete="nickname" required />
         </label>
         <button type="button" class="btn btn-primary" id="solo-btn">Play vs AI</button>
+        <button type="button" class="btn" id="watch-btn">Watch bots</button>
+        <div class="lobby-watch-opts" id="watch-opts">
+          <label class="field field-inline">
+            <span>Map</span>
+            <select id="watch-map-size">
+              <option value="small">Small</option>
+              <option value="medium" selected>Medium</option>
+              <option value="large">Large</option>
+            </select>
+          </label>
+          <label class="field field-inline">
+            <span>Bots</span>
+            <select id="watch-bot-count">
+              <option value="4">4</option>
+              <option value="6">6</option>
+              <option value="8" selected>8</option>
+              <option value="12">12</option>
+            </select>
+          </label>
+        </div>
         <div class="lobby-actions">
           <button type="submit" class="btn" id="join-btn">Join lobby</button>
           <button type="button" class="btn" id="ready-btn" disabled>Ready</button>
@@ -129,6 +151,8 @@ app.innerHTML = `
 
       <div class="hud-zone zone-tc">
         <div class="hud-tip hidden" id="hud-tip"></div>
+        <div class="combat-log" id="combat-log" aria-live="polite"></div>
+        <div class="spectator-banner hidden" id="spectator-banner">Watching · hard bots</div>
       </div>
 
       <div class="hud-zone zone-tr">
@@ -151,22 +175,27 @@ app.innerHTML = `
           <h3>How to play</h3>
           <ol class="help-list">
             <li><strong>You</strong> are the amber-ringed homeworld.</li>
-            <li><strong>Move:</strong> select a system with your ships, then click where to go. The fleet routes along the lanes.</li>
+            <li><strong>Move:</strong> select a system with your ships, then click where to go. Shift+click fleets to multi-select; <kbd>A</kbd> selects all here.</li>
             <li><strong>Claim:</strong> select your fleet, then click an enemy or neutral system. Population embarks automatically and captures on arrival if it beats the garrison. Ships alone never flip ownership.</li>
             <li><strong>Raid only:</strong> hold <kbd>Alt</kbd> while clicking to send ships without colonists.</li>
-            <li><strong>Build</strong> fighters at home; cruisers need a shipyard. <strong>Credits</strong> buy ships, tech and upgrades. <strong>Pop</strong> only buys territory.</li>
+            <li><strong>Retarget:</strong> reordering a fleet already in transit needs a second click (or hold <kbd>Ctrl</kbd>) so you don't cancel by accident.</li>
+            <li><strong>Build</strong> fighters at home; cruisers need a shipyard. Higher shipyard levels unlock more concurrent build slots. <strong>Credits</strong> buy ships, tech and upgrades. <strong>Pop</strong> only buys territory.</li>
+            <li><strong>Ships:</strong> Fighters swarm cheaply, Cruisers counter fighters, Battleships counter cruisers — pick the mix for the fight.</li>
             <li><strong>Grow income:</strong> capture resource nodes for cargo credits, core worlds for population, then press <em>Upgrade</em> on those systems — rates show under Credits / Pop and on the selected system.</li>
           </ol>
           <h3>Shortcuts</h3>
           <dl class="shortcuts">
             <div><dt><kbd>Tab</kbd></dt><dd>Cycle fleets here</dd></div>
+            <div><dt><kbd>A</kbd></dt><dd>Select all fleets here</dd></div>
+            <div><dt><kbd>Shift</kbd>+click</dt><dd>Add/remove fleet from selection</dd></div>
             <div><dt><kbd>B</kbd></dt><dd>Build fighter</dd></div>
             <div><dt><kbd>U</kbd></dt><dd>Upgrade system</dd></div>
             <div><dt><kbd>C</kbd></dt><dd>Pre-load colonists</dd></div>
             <div><dt><kbd>Alt</kbd>+click</dt><dd>Raid without colonists</dd></div>
+            <div><dt><kbd>Ctrl</kbd>+click</dt><dd>Force retarget in transit</dd></div>
             <div><dt><kbd>H</kbd></dt><dd>Jump to homeworld</dd></div>
             <div><dt><kbd>T</kbd></dt><dd>Tech panel</dd></div>
-            <div><dt><kbd>Esc</kbd></dt><dd>Clear path / close panel</dd></div>
+            <div><dt><kbd>Esc</kbd></dt><dd>Clear path / selection / close panel</dd></div>
             <div><dt><kbd>+</kbd> <kbd>−</kbd> <kbd>0</kbd></dt><dd>Zoom in / out / fit</dd></div>
           </dl>
         </aside>
@@ -218,12 +247,18 @@ let isHost = false;
 let ready = false;
 let joined = false;
 let soloRequested = false;
+let watchRequested = false;
+let isSpectator = false;
 let match: MatchStartMessage | null = null;
 let view: PlayerView | null = null;
 let ranks: ScoreRank[] = [];
 let selectedNode: NodeId | null = null;
 let pathPreview: NodeId[] = [];
 let selectedFleetId: string | null = null;
+let selectedFleetIds = new Set<string>();
+/** Fleet ids pending retarget confirm (double-click within window). */
+let retargetArmed = new Map<string, number>();
+let combatLogEntries: { text: string; expires: number }[] = [];
 let roundTicks = 3600;
 let activePanel: PanelId | null = "standings";
 let diploOpen = false;
@@ -239,6 +274,7 @@ const errEl = $("lobby-error");
 const readyBtn = $<HTMLButtonElement>("ready-btn");
 const startBtn = $<HTMLButtonElement>("start-btn");
 const soloBtn = $<HTMLButtonElement>("solo-btn");
+const watchBtn = $<HTMLButtonElement>("watch-btn");
 const nameInput = $<HTMLInputElement>("name");
 const splitInput = $<HTMLInputElement>("split");
 const canvas = $<HTMLCanvasElement>("map");
@@ -250,6 +286,7 @@ const renderState: RenderState = {
   seatColors: {},
   selfId: "p0",
   selectedNode: null,
+  selectedFleetIds: new Set(),
   pathPreview: [],
   ownershipPulse: new Map(),
   upgradePulse: new Map(),
@@ -257,6 +294,7 @@ const renderState: RenderState = {
   combatBursts: [],
   allies: new Set(),
   showMinimap: window.innerWidth >= 900,
+  powerPreview: null,
 };
 
 window.addEventListener("resize", () => {
@@ -311,13 +349,30 @@ function connectAndHello(name: string): void {
     $<HTMLButtonElement>("join-btn").disabled = true;
     $("lobby-roster").hidden = false;
     if (soloRequested) {
-      net.setReady(true);
       ready = true;
       readyBtn.textContent = "Unready";
       // Give the server a beat to seat us before asking it to fill with bots.
+      // Do not setReady first — that used to auto-start with pre-seeded bots.
       setTimeout(() => net.startMatch(7), 120);
+    } else if (watchRequested) {
+      ready = true;
+      readyBtn.textContent = "Unready";
+      setTimeout(() => startWatchMatch(), 120);
     }
   };
+}
+
+function startWatchMatch(): void {
+  const bots = Number(($<HTMLSelectElement>("watch-bot-count").value) || 8);
+  const mapSize = $<HTMLSelectElement>("watch-map-size").value as
+    | "small"
+    | "medium"
+    | "large";
+  net.startMatch(bots, {
+    difficulty: "hard",
+    mapSize,
+    spectator: true,
+  });
 }
 
 $("join-form").addEventListener("submit", (e) => {
@@ -325,6 +380,7 @@ $("join-form").addEventListener("submit", (e) => {
   const name = nameInput.value.trim();
   if (!name) return;
   soloRequested = false;
+  watchRequested = false;
   connectAndHello(name);
 });
 
@@ -332,11 +388,27 @@ soloBtn.addEventListener("click", () => {
   const name = nameInput.value.trim() || "Commander";
   nameInput.value = name;
   soloRequested = true;
+  watchRequested = false;
   soloBtn.disabled = true;
+  watchBtn.disabled = true;
   soloBtn.textContent = "Launching…";
   if (joined) {
-    net.setReady(true);
     net.startMatch(7);
+  } else {
+    connectAndHello(name);
+  }
+});
+
+watchBtn.addEventListener("click", () => {
+  const name = nameInput.value.trim() || "Spectator";
+  nameInput.value = name;
+  watchRequested = true;
+  soloRequested = false;
+  watchBtn.disabled = true;
+  soloBtn.disabled = true;
+  watchBtn.textContent = "Launching…";
+  if (joined) {
+    startWatchMatch();
   } else {
     connectAndHello(name);
   }
@@ -462,7 +534,29 @@ function ownFleetsAt(nodeId: NodeId): Fleet[] {
 function selectNode(nodeId: NodeId | null): void {
   selectedNode = nodeId;
   pathPreview = nodeId ? [nodeId] : [];
-  selectedFleetId = nodeId ? (ownFleetsAt(nodeId)[0]?.id ?? null) : null;
+  const first = nodeId ? (ownFleetsAt(nodeId)[0]?.id ?? null) : null;
+  selectedFleetId = first;
+  selectedFleetIds = first ? new Set([first]) : new Set();
+  syncFleetSelection();
+  updateStrip();
+}
+
+function syncFleetSelection(): void {
+  renderState.selectedFleetIds = selectedFleetIds;
+  if (selectedFleetIds.size === 1) {
+    selectedFleetId = [...selectedFleetIds][0]!;
+  } else if (selectedFleetIds.size === 0) {
+    selectedFleetId = null;
+  } else if (!selectedFleetId || !selectedFleetIds.has(selectedFleetId)) {
+    selectedFleetId = [...selectedFleetIds][0] ?? null;
+  }
+}
+
+function selectAllFleetsHere(): void {
+  if (!selectedNode) return;
+  const fleets = ownFleetsAt(selectedNode);
+  selectedFleetIds = new Set(fleets.map((f) => f.id));
+  syncFleetSelection();
   updateStrip();
 }
 
@@ -472,46 +566,93 @@ function cycleFleet(): void {
   if (fleets.length < 2) return;
   const idx = fleets.findIndex((f) => f.id === selectedFleetId);
   selectedFleetId = fleets[(idx + 1) % fleets.length]!.id;
+  selectedFleetIds = new Set([selectedFleetId]);
+  syncFleetSelection();
   updateStrip();
 }
 
-renderer.bindPanZoom((nodeId, mods) => {
-  if (!match || !view) return;
-  if (!nodeId) {
-    selectNode(null);
-    return;
-  }
+function clearPathStaging(): void {
+  pathPreview = selectedNode ? [selectedNode] : [];
+  updateStrip();
+}
 
-  const anchor = pathPreview[pathPreview.length - 1] ?? selectedNode;
-
-  // Shift extends an explicit route without dispatching it yet.
-  if (mods.shift && anchor && selectedFleetId) {
-    const seg = findPath(anchor, nodeId);
-    if (!seg || seg.length < 2) {
-      flashIllegal();
+renderer.bindPanZoom(
+  (nodeId, mods) => {
+    if (!match || !view || isSpectator) {
+      if (nodeId) {
+        selectedNode = nodeId;
+        updateStrip();
+      }
       return;
     }
-    pathPreview = [...pathPreview, ...seg.slice(1)];
+    if (!nodeId) {
+      selectNode(null);
+      return;
+    }
+
+    const fleetsHere = ownFleetsAt(nodeId);
+    // Shift+click on a system with own fleets toggles multi-select among fleets there.
+    if (mods.shift && fleetsHere.length > 0 && selectedNode === nodeId) {
+      const fid = fleetsHere[0]!.id;
+      if (selectedFleetIds.has(fid) && fleetsHere.length === 1) {
+        selectedFleetIds.delete(fid);
+      } else {
+        for (const f of fleetsHere) {
+          if (selectedFleetIds.has(f.id)) selectedFleetIds.delete(f.id);
+          else selectedFleetIds.add(f.id);
+        }
+      }
+      if (selectedFleetIds.size === 0 && fleetsHere[0]) {
+        selectedFleetIds.add(fleetsHere[0].id);
+      }
+      selectedNode = nodeId;
+      pathPreview = [nodeId];
+      syncFleetSelection();
+      updateStrip();
+      return;
+    }
+
+    const anchor = pathPreview[pathPreview.length - 1] ?? selectedNode;
+
+    // Shift extends an explicit route without dispatching it yet.
+    if (mods.shift && anchor && selectedFleetIds.size > 0) {
+      const seg = findPath(anchor, nodeId);
+      if (!seg || seg.length < 2) {
+        flashIllegal();
+        return;
+      }
+      pathPreview = [...pathPreview, ...seg.slice(1)];
+      updateStrip();
+      return;
+    }
+
+    if (selectedFleetIds.size === 0 || !anchor || nodeId === selectedNode) {
+      selectNode(nodeId);
+      return;
+    }
+
+    const tail = findPath(anchor, nodeId);
+    if (!tail || tail.length < 2) {
+      selectNode(nodeId);
+      return;
+    }
+    const full = [...pathPreview, ...tail.slice(1)];
+    sendMoves(full, mods.alt, mods.ctrl);
+    pathPreview = selectedNode ? [selectedNode] : [];
     updateStrip();
-    return;
-  }
-
-  if (!selectedFleetId || !anchor || nodeId === selectedNode) {
-    selectNode(nodeId);
-    return;
-  }
-
-  const tail = findPath(anchor, nodeId);
-  if (!tail || tail.length < 2) {
-    // Nothing to route to — treat as a plain selection change.
-    selectNode(nodeId);
-    return;
-  }
-  const full = [...pathPreview, ...tail.slice(1)];
-  // Colonists auto-embark on the server for claim moves; Alt = ships-only raid.
-  sendMove(full, mods.alt);
-  selectNode(selectedNode);
-});
+  },
+  undefined,
+  () => {
+    if (pathPreview.length > 1) clearPathStaging();
+    else if (selectedFleetIds.size > 1) {
+      selectedFleetIds = selectedFleetId
+        ? new Set([selectedFleetId])
+        : new Set();
+      syncFleetSelection();
+      updateStrip();
+    }
+  },
+);
 
 window.addEventListener("keydown", (e) => {
   if (!match || !view) return;
@@ -524,14 +665,23 @@ window.addEventListener("keydown", (e) => {
       if (activePanel) setPanel(null);
       else if (diploOpen) setDiplo(false);
       else if (pathPreview.length > 1) {
-        pathPreview = selectedNode ? [selectedNode] : [];
+        clearPathStaging();
+      } else if (selectedFleetIds.size > 1) {
+        selectedFleetIds = selectedFleetId
+          ? new Set([selectedFleetId])
+          : new Set();
+        syncFleetSelection();
         updateStrip();
       } else selectNode(null);
       e.preventDefault();
       break;
     case "Tab":
-      cycleFleet();
+      if (!isSpectator) cycleFleet();
       e.preventDefault();
+      break;
+    case "a":
+    case "A":
+      if (!isSpectator) selectAllFleetsHere();
       break;
     case "t":
       setPanel(activePanel === "tech" ? null : "tech");
@@ -565,13 +715,13 @@ window.addEventListener("keydown", (e) => {
       renderer.fitMap(match.map);
       break;
     case "b":
-      clickAction("build-fighter");
+      if (!isSpectator) clickAction("build-fighter");
       break;
     case "u":
-      clickAction("upgrade");
+      if (!isSpectator) clickAction("upgrade");
       break;
     case "c":
-      clickAction("load");
+      if (!isSpectator) clickAction("load");
       break;
     default:
       break;
@@ -586,36 +736,79 @@ function clickAction(key: string): void {
   else flashIllegal();
 }
 
-function sendMove(path: NodeId[], raidOnly = false): void {
-  if (!selectedFleetId || path.length < 2 || !view) return;
-  const fleet = view.fleets[selectedFleetId];
-  if (!fleet) return;
+function sendMoves(path: NodeId[], raidOnly = false, forceRetarget = false): void {
+  if (selectedFleetIds.size === 0 || path.length < 2 || !view || isSpectator)
+    return;
+  const now = performance.now();
   const pct = Number(splitInput.value) / 100;
-  let intent: Intent = {
-    type: "MoveFleet",
-    fleetId: selectedFleetId,
-    path: [...path],
-    ...(raidOnly ? { raidOnly: true } : {}),
-  };
-  if (pct < 0.999) {
-    const composition: Record<string, number> = {};
-    for (const [k, n] of Object.entries(fleet.composition)) {
-      const take = Math.floor((n ?? 0) * pct);
-      if (take > 0) composition[k] = take;
+  let blocked = 0;
+
+  for (const fleetId of selectedFleetIds) {
+    const fleet = view.fleets[fleetId];
+    if (!fleet || fleet.ownerId !== view.self.id) continue;
+
+    if (fleet.location.kind === "transit" && !forceRetarget) {
+      const armedAt = retargetArmed.get(fleetId) ?? 0;
+      if (now - armedAt > 1200) {
+        retargetArmed.set(fleetId, now);
+        blocked += 1;
+        continue;
+      }
+      retargetArmed.delete(fleetId);
     }
-    if (Object.keys(composition).length === 0) {
+
+    const fleetPath =
+      fleet.location.kind === "node"
+        ? (() => {
+            const from = fleet.location.nodeId;
+            if (from === path[0]) return path;
+            const bridge = findPath(from, path[0]!);
+            if (!bridge || bridge.length < 1) return null;
+            return [...bridge, ...path.slice(1)];
+          })()
+        : path;
+
+    if (!fleetPath || fleetPath.length < 2) {
       flashIllegal();
-      return;
+      continue;
     }
-    intent = {
+
+    let intent: Intent = {
       type: "MoveFleet",
-      fleetId: selectedFleetId,
-      path: [...path],
-      composition,
+      fleetId,
+      path: [...fleetPath],
       ...(raidOnly ? { raidOnly: true } : {}),
     };
+    if (pct < 0.999) {
+      const composition: Record<string, number> = {};
+      for (const [k, n] of Object.entries(fleet.composition)) {
+        const take = Math.floor((n ?? 0) * pct);
+        if (take > 0) composition[k] = take;
+      }
+      if (Object.keys(composition).length === 0) {
+        flashIllegal();
+        continue;
+      }
+      intent = {
+        type: "MoveFleet",
+        fleetId,
+        path: [...fleetPath],
+        composition,
+        ...(raidOnly ? { raidOnly: true } : {}),
+      };
+    }
+    net.intent(intent);
   }
-  net.intent(intent);
+
+  if (blocked > 0) {
+    const tip = $("hud-tip");
+    tip.textContent =
+      blocked === 1
+        ? "Fleet in transit — click again to retarget (or Ctrl+click)"
+        : `${blocked} fleets in transit — click again to retarget (or Ctrl+click)`;
+    tip.classList.remove("hidden");
+    setTimeout(() => tip.classList.add("hidden"), 2200);
+  }
 }
 
 function flashIllegal(): void {
@@ -651,6 +844,8 @@ function handleServer(msg: ServerMessage): void {
       errEl.textContent = msg.message;
       soloBtn.disabled = false;
       soloBtn.textContent = "Play vs AI";
+      watchBtn.disabled = false;
+      watchBtn.textContent = "Watch bots";
       break;
     default:
       break;
@@ -663,8 +858,10 @@ function beginMatch(msg: MatchStartMessage): void {
   roundTicks = msg.roundTicks;
   clientId = msg.clientId;
   storeClientId(msg.clientId);
+  isSpectator = Boolean(msg.spectator);
   lobbyEl.classList.add("hidden");
   matchEl.classList.remove("hidden");
+  $("spectator-banner").classList.toggle("hidden", !isSpectator);
   // Canvas was 0x0 while the lobby covered it.
   renderer.resize();
   renderer.setMap(msg.map);
@@ -673,6 +870,10 @@ function beginMatch(msg: MatchStartMessage): void {
   renderState.selfId = msg.playerId;
   renderState.view = msg.view;
   renderState.allies = new Set(msg.view.self.allies);
+  selectedFleetIds = new Set();
+  syncFleetSelection();
+  combatLogEntries = [];
+  $("combat-log").innerHTML = "";
 
   const homeId = msg.view.self.homeworldId;
   const focusIds =
@@ -720,14 +921,17 @@ function applyTickUpdate(msg: TickUpdateMessage): void {
     let wy: number | null = null;
     let seen = false;
     if (c.location.kind === "node") {
-      seen = visible.has(c.location.nodeId);
+      seen = visible.has(c.location.nodeId) || isSpectator;
       const p = layout[c.location.nodeId];
       if (p) {
         wx = p.x;
         wy = p.y;
       }
     } else {
-      seen = visible.has(c.location.from) || visible.has(c.location.to);
+      seen =
+        visible.has(c.location.from) ||
+        visible.has(c.location.to) ||
+        isSpectator;
       const a = layout[c.location.from];
       const b = layout[c.location.to];
       if (a && b) {
@@ -741,6 +945,14 @@ function applyTickUpdate(msg: TickUpdateMessage): void {
         renderState.combatBursts = renderState.combatBursts ?? [];
         renderState.combatBursts.push({ x: wx, y: wy });
       }
+    }
+
+    const involvesSelf =
+      isSpectator ||
+      c.winnerId === view.self.id ||
+      c.loserId === view.self.id;
+    if (involvesSelf) {
+      pushCombatLog(c);
     }
   }
 
@@ -1045,8 +1257,9 @@ function updateStrip(): void {
   if (!selectedNode || !view || !match) {
     strip.classList.add("hidden");
     tip.classList.remove("hidden");
-    tip.textContent =
-      "Select your ships, then click a system to move. Claiming takes colonists with you — press ? for help.";
+    tip.textContent = isSpectator
+      ? "Watching hard bots — click systems to inspect."
+      : "Select your ships, then click a system to move. Claiming takes colonists with you — press ? for help.";
     lastStripKey = "";
     lastActionKey = "";
     return;
@@ -1181,9 +1394,14 @@ function updateStrip(): void {
     stats.push(statRow("Cargo", String(vn.cargoStockpile)));
   }
   if (queue.length > 0) {
+    const slots =
+      mine && (role === "shipyard" || role === "homeworld")
+        ? buildSlots(role, level, BAL)
+        : 0;
+    const active = Math.min(slots, queue.length);
     stats.push(
       statRow(
-        "Building",
+        slots > 0 ? `Building ${active}/${slots}` : "Building",
         queue
           .map(
             (b) =>
@@ -1192,6 +1410,9 @@ function updateStrip(): void {
           .join(", "),
       ),
     );
+  }
+  if (selectedFleetIds.size > 1) {
+    stats.push(statRow("Selected", `${selectedFleetIds.size} fleets`));
   }
   $("strip-stats").innerHTML = stats.join("");
 
@@ -1233,6 +1454,18 @@ function updateStrip(): void {
 
   const actions = $("strip-actions");
   actions.innerHTML = "";
+
+  if (isSpectator) return;
+
+  if (mine && selectedFleetIds.size > 0) {
+    addAction(
+      actions,
+      "Select all here",
+      "Select every fleet at this system",
+      () => selectAllFleetsHere(),
+      { key: "select-all" },
+    );
+  }
 
   if (mine && (role === "shipyard" || role === "homeworld")) {
     addCostAction(actions, "Build fighter", BAL.ships.fighter.creditCost, credits, {
@@ -1411,11 +1644,102 @@ function garrisonForRole(
 
 function formatComposition(c: Record<string, number | undefined>): string {
   const parts: string[] = [];
-  for (const t of ["fighter", "cruiser", "battleship"] as ShipType[]) {
+  for (const t of ["fighter", "cruiser", "battleship"] as const) {
     const n = c[t] ?? 0;
     if (n > 0) parts.push(`${n}${t[0]!.toUpperCase()}`);
   }
   return parts.join(" ");
+}
+
+function pushCombatLog(c: {
+  winnerId: string | null;
+  loserId: string | null;
+  winnerPowerBefore: number;
+  loserPowerBefore: number;
+  winnerPowerRemaining: number;
+  winnerCompositionBefore?: Record<string, number | undefined>;
+  winnerCompositionAfter?: Record<string, number | undefined>;
+  loserCompositionBefore?: Record<string, number | undefined>;
+}): void {
+  const wBefore = Math.round(c.winnerPowerBefore);
+  const lBefore = Math.round(c.loserPowerBefore);
+  const rem = Math.round(c.winnerPowerRemaining);
+  let losses = "";
+  if (c.winnerCompositionBefore && c.winnerCompositionAfter) {
+    const lost: Record<string, number> = {};
+    for (const t of ["fighter", "cruiser", "battleship"] as const) {
+      const n =
+        (c.winnerCompositionBefore[t] ?? 0) -
+        (c.winnerCompositionAfter[t] ?? 0);
+      if (n > 0) lost[t] = n;
+    }
+    const lostStr = formatComposition(lost);
+    if (lostStr) losses = ` (lost ${lostStr})`;
+  } else if (c.loserCompositionBefore) {
+    const wiped = formatComposition(c.loserCompositionBefore);
+    if (wiped) losses = ` (wiped ${wiped})`;
+  }
+  const text = c.winnerId
+    ? `${wBefore} vs ${lBefore} → ${rem} remaining${losses}`
+    : `${wBefore} vs ${lBefore} → mutual wipe`;
+  combatLogEntries.unshift({ text, expires: performance.now() + 4000 });
+  combatLogEntries = combatLogEntries.slice(0, 8);
+  refreshCombatLog();
+}
+
+function refreshCombatLog(): void {
+  const el = $("combat-log");
+  const now = performance.now();
+  combatLogEntries = combatLogEntries.filter((e) => e.expires > now);
+  el.innerHTML = combatLogEntries
+    .map((e) => `<div class="combat-log-line">${escapeHtml(e.text)}</div>`)
+    .join("");
+}
+
+function updatePowerPreview(): void {
+  renderState.powerPreview = null;
+  if (!view || !match || isSpectator || selectedFleetIds.size === 0) return;
+  const hover = renderer.hovered;
+  if (!hover || hover === selectedNode) return;
+  const node = view.nodes[hover];
+  if (!node || isFoggedNode(node)) return;
+
+  let myPower = 0;
+  let myComp: Record<string, number> = {};
+  for (const id of selectedFleetIds) {
+    const f = view.fleets[id];
+    if (!f) continue;
+    myPower += fleetPower(f.composition, BAL);
+    for (const [k, n] of Object.entries(f.composition)) {
+      myComp[k] = (myComp[k] ?? 0) + (n ?? 0);
+    }
+  }
+  if (myPower <= 0) return;
+
+  let theirPower = 0;
+  let theirComp: Record<string, number> = {};
+  for (const f of Object.values(view.fleets)) {
+    if (f.location.kind !== "node" || f.location.nodeId !== hover) continue;
+    if (f.ownerId === view.self.id || view.self.allies.includes(f.ownerId))
+      continue;
+    theirPower += fleetPower(f.composition, BAL);
+    for (const [k, n] of Object.entries(f.composition)) {
+      theirComp[k] = (theirComp[k] ?? 0) + (n ?? 0);
+    }
+  }
+  if (theirPower <= 0) return;
+
+  const myEff = effectiveCombatPower(myComp, theirComp, BAL);
+  const theirEff = effectiveCombatPower(theirComp, myComp, BAL);
+  const outlook =
+    myEff > theirEff ? "likely win" : myEff < theirEff ? "likely lose" : "coin flip";
+  const layout = match.map.layout?.[hover];
+  if (!layout) return;
+  renderState.powerPreview = {
+    x: layout.x,
+    y: layout.y,
+    text: `P${Math.round(myEff)} vs P${Math.round(theirEff)} · ${outlook}`,
+  };
 }
 
 function addCostAction(
@@ -1496,7 +1820,10 @@ function frame(now: number): void {
   if (match && view) {
     renderState.view = view;
     renderState.selectedNode = selectedNode;
+    renderState.selectedFleetIds = selectedFleetIds;
     renderState.pathPreview = pathPreview;
+    updatePowerPreview();
+    if (combatLogEntries.length) refreshCombatLog();
     renderer.draw(renderState, dt);
   }
   requestAnimationFrame(frame);

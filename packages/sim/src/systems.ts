@@ -361,7 +361,10 @@ function resolveEngagement(
         winnerPowerBefore: r.winnerPowerBefore,
         loserPowerBefore: r.loserPowerBefore,
         winnerPowerRemaining: r.winnerPowerRemaining,
+        winnerCompositionBefore: r.winnerCompositionBefore,
+        loserCompositionBefore: r.loserCompositionBefore,
         winnerCompositionAfter: r.winnerCompositionAfter,
+        loserCompositionAfter: r.loserCompositionAfter,
       });
     }
   }

@@ -1,6 +1,7 @@
 import type { Execution, Game } from "../game.js";
 import {
   addComposition,
+  buildSlots,
   buildTicksRequired,
   canBuildBattleship,
   canResearch,
@@ -9,6 +10,7 @@ import {
   effectiveGarrison,
   effectiveTicksPerHop,
   isEmptyComposition,
+  maxBuildQueueDepth,
   subtractComposition,
   techCost,
   upgradeCost,
@@ -92,6 +94,7 @@ export class UpgradeNodeExecution implements Execution {
     }
     player.credits -= cost;
     node.level += 1;
+    recalculateBuildQueueSpeeds(game, node.id);
     this.active = false;
   }
   tick(): void {}
@@ -124,6 +127,13 @@ export class ResearchExecution implements Execution {
       playerId: this.playerId,
       techId: this.techId,
     });
+    if (this.techId === "rapid_deployment") {
+      for (const node of Object.values(game.state.nodes)) {
+        if (node.ownerId === this.playerId) {
+          recalculateBuildQueueSpeeds(game, node.id);
+        }
+      }
+    }
     this.active = false;
   }
   tick(): void {}
@@ -170,6 +180,11 @@ export class BuildShipsExecution implements Execution {
       this.active = false;
       return;
     }
+    const depthCap = maxBuildQueueDepth(role, node.level, game.balance);
+    if (depthCap <= 0 || node.buildQueue.length >= depthCap) {
+      this.active = false;
+      return;
+    }
     const unitCost = game.balance.ships[this.shipType].creditCost;
     const total = unitCost * this.count;
     if (player.credits < total) {
@@ -184,12 +199,23 @@ export class BuildShipsExecution implements Execution {
       player.researched,
       game.balance,
     );
-    node.buildQueue.push({
-      shipType: this.shipType,
-      count: this.count,
-      progressTicks: 0,
-      ticksRequired,
-    });
+    const last = node.buildQueue[node.buildQueue.length - 1];
+    // Merge into the last order when same type and that order hasn't started.
+    if (
+      last &&
+      last.shipType === this.shipType &&
+      last.progressTicks === 0
+    ) {
+      last.count += this.count;
+      last.ticksRequired = ticksRequired;
+    } else {
+      node.buildQueue.push({
+        shipType: this.shipType,
+        count: this.count,
+        progressTicks: 0,
+        ticksRequired,
+      });
+    }
     this.active = false;
   }
   tick(): void {}
@@ -590,6 +616,77 @@ export class BreakAllianceExecution implements Execution {
   }
 }
 
+/** Scale in-progress build progress when level/tech changes build speed. */
+function recalculateBuildQueueSpeeds(game: Game, nodeId: NodeId): void {
+  const node = game.state.nodes[nodeId];
+  const gnode = game.state.map.nodes[nodeId];
+  if (!node?.ownerId || !gnode) return;
+  const player = game.state.players[node.ownerId];
+  if (!player) return;
+  for (const order of node.buildQueue) {
+    const newTicks = buildTicksRequired(
+      order.shipType,
+      gnode.role,
+      node.level,
+      player.researched,
+      game.balance,
+    );
+    if (order.ticksRequired === newTicks) continue;
+    if (order.ticksRequired > 0 && order.progressTicks > 0) {
+      const frac = order.progressTicks / order.ticksRequired;
+      order.progressTicks = Math.min(
+        newTicks - 1,
+        Math.floor(frac * newTicks),
+      );
+    }
+    order.ticksRequired = newTicks;
+  }
+}
+
+function completeOneShipFromOrder(
+  game: Game,
+  node: (typeof game.state.nodes)[string],
+  orderIndex: number,
+): void {
+  const order = node.buildQueue[orderIndex]!;
+  order.progressTicks = 0;
+  order.count -= 1;
+  const player = game.state.players[node.ownerId!];
+  if (!player) return;
+
+  let fleet = Object.values(game.state.fleets).find(
+    (f) =>
+      f.ownerId === node.ownerId &&
+      f.location.kind === "node" &&
+      f.location.nodeId === node.id,
+  );
+  if (!fleet) {
+    fleet = {
+      id: game.nextFleetId(),
+      ownerId: node.ownerId!,
+      composition: {},
+      location: { kind: "node", nodeId: node.id },
+    };
+    game.addFleet(fleet);
+  }
+  fleet.composition = addComposition(fleet.composition, {
+    [order.shipType]: 1,
+  });
+
+  if (order.count <= 0) {
+    node.buildQueue.splice(orderIndex, 1);
+  } else {
+    const gnode = game.state.map.nodes[node.id]!;
+    order.ticksRequired = buildTicksRequired(
+      order.shipType,
+      gnode.role,
+      node.level,
+      player.researched,
+      game.balance,
+    );
+  }
+}
+
 /** Ongoing: advance build queues each tick. */
 export class BuildProgressExecution implements Execution {
   readonly id = "buildProgress_ongoing";
@@ -598,48 +695,20 @@ export class BuildProgressExecution implements Execution {
   tick(game: Game): void {
     for (const node of Object.values(game.state.nodes)) {
       if (!node.ownerId || node.buildQueue.length === 0) continue;
-      const order = node.buildQueue[0]!;
-      order.progressTicks += 1;
-      if (order.progressTicks < order.ticksRequired) continue;
+      const gnode = game.state.map.nodes[node.id];
+      if (!gnode) continue;
+      const slots = buildSlots(gnode.role, node.level, game.balance);
+      if (slots <= 0) continue;
 
-      // Complete one ship at a time from the order
-      order.progressTicks = 0;
-      order.count -= 1;
-      const player = game.state.players[node.ownerId];
-      if (!player) continue;
-
-      // Find or create fleet at node
-      let fleet = Object.values(game.state.fleets).find(
-        (f) =>
-          f.ownerId === node.ownerId &&
-          f.location.kind === "node" &&
-          f.location.nodeId === node.id,
-      );
-      if (!fleet) {
-        fleet = {
-          id: game.nextFleetId(),
-          ownerId: node.ownerId,
-          composition: {},
-          location: { kind: "node", nodeId: node.id },
-        };
-        game.addFleet(fleet);
-      }
-      fleet.composition = addComposition(fleet.composition, {
-        [order.shipType]: 1,
-      });
-
-      if (order.count <= 0) {
-        node.buildQueue.shift();
-      } else {
-        // Recalc ticks for next ship (tech/level may have changed)
-        const gnode = game.state.map.nodes[node.id]!;
-        order.ticksRequired = buildTicksRequired(
-          order.shipType,
-          gnode.role,
-          node.level,
-          player.researched,
-          game.balance,
-        );
+      // Advance up to `slots` concurrent orders (front of queue).
+      const activeOrders = node.buildQueue.slice(0, slots);
+      for (const order of activeOrders) {
+        if (!node.buildQueue.includes(order)) continue;
+        order.progressTicks += 1;
+        if (order.progressTicks >= order.ticksRequired) {
+          const idx = node.buildQueue.indexOf(order);
+          if (idx >= 0) completeOneShipFromOrder(game, node, idx);
+        }
       }
     }
   }

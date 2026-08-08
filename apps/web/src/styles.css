@@ -1261,3 +1261,52 @@ input:focus-visible {
     transition-duration: 0.001ms !important;
   }
 }
+
+.lobby-watch-opts {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin: 0.35rem 0 0.6rem;
+}
+
+.field-inline {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+}
+
+.field-inline select {
+  background: rgba(0, 0, 0, 0.35);
+  color: inherit;
+  border: 1px solid rgba(245, 242, 234, 0.2);
+  border-radius: 4px;
+  padding: 0.2rem 0.4rem;
+}
+
+.combat-log {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  pointer-events: none;
+  max-width: min(420px, 70vw);
+  margin: 0.35rem auto 0;
+  text-align: center;
+}
+
+.combat-log-line {
+  font: 600 0.78rem/1.25 "Source Sans 3", sans-serif;
+  color: #f5f2ea;
+  background: rgba(7, 9, 13, 0.72);
+  padding: 0.28rem 0.55rem;
+  border-radius: 4px;
+}
+
+.spectator-banner {
+  margin-top: 0.35rem;
+  text-align: center;
+  font: 600 0.8rem/1 "Source Sans 3", sans-serif;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #c4a035;
+}

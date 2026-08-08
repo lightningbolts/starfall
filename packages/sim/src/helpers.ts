@@ -102,11 +102,8 @@ export function effectiveGarrison(
 ): number {
   const rb = balance.roles[role];
   const levelsAbove = Math.max(0, node.level - 1);
-  // Soft exponential on the L1 base, plus the flat per-level table.
-  let g = Math.round(
-    rb.garrisonBase * levelScale(node.level, 1 + rb.garrisonLevelFactor),
-  );
-  g += levelsAbove * rb.garrisonPerLevel;
+  // Linear: base + flat per level (+ tech).
+  let g = rb.garrisonBase + levelsAbove * rb.garrisonPerLevel;
   if (researched) {
     if (researched.has("fortified_colonies")) {
       g = Math.floor(g * balance.tech.fortified_colonies.garrisonFactor);
@@ -123,18 +120,22 @@ export function upgradeCost(
   currentLevel: number,
   balance: BalanceTable,
 ): number {
-  // cost to go from currentLevel → currentLevel+1
-  // cost(n) = base × growth^(n-1) where n is the target level (n>=2)
+  // Exponential through upgradeGrowthLevels, then flat at the L5→L6 cost.
+  // cost(L→L+1) = round(base × growth^min(L-1, growthLevels-1))
   const target = currentLevel + 1;
   if (target < 2) return 0;
   const base = balance.roles[role].upgradeBaseCost;
+  const cappedExp = Math.min(
+    currentLevel - 1,
+    balance.upgradeGrowthLevels - 1,
+  );
   return Math.max(
     1,
-    Math.round(base * Math.pow(balance.upgradeGrowth, target - 2)),
+    Math.round(base * Math.pow(balance.upgradeGrowth, cappedExp)),
   );
 }
 
-/** Exponential level multiplier: growth^(level−1). L1 = 1. */
+/** Exponential level multiplier: growth^(level−1). L1 = 1. Kept for callers. */
 export function levelScale(level: number, growth: number): number {
   const above = Math.max(0, level - 1);
   if (above === 0 || growth <= 1) return 1;
@@ -142,8 +143,8 @@ export function levelScale(level: number, growth: number): number {
 }
 
 /**
- * Scale a base rate by level. `growthMinusOne` of 0.2 → ×1.2 per level
- * (exponential). Always at least `base` so L1 stays readable.
+ * Linear level scale: base + round(base × factor × (level − 1)).
+ * Always at least `base` so L1 stays readable.
  */
 export function scaleByLevel(
   base: number,
@@ -152,8 +153,31 @@ export function scaleByLevel(
 ): number {
   if (base <= 0) return 0;
   if (growthMinusOne <= 0) return base;
-  const scaled = base * levelScale(level, 1 + growthMinusOne);
-  return Math.max(base, Math.round(scaled));
+  const above = Math.max(0, level - 1);
+  const scaled = base + Math.round(base * growthMinusOne * above);
+  return Math.max(base, scaled);
+}
+
+/** Concurrent build slots for a node role at the given level. */
+export function buildSlots(
+  role: NodeRole,
+  level: number,
+  balance: BalanceTable,
+): number {
+  if (role === "homeworld") return 1;
+  const per = balance.roles[role].buildSlotsPerLevel;
+  if (per <= 0) return 0;
+  return Math.max(1, Math.floor(per * Math.max(1, level)));
+}
+
+export function maxBuildQueueDepth(
+  role: NodeRole,
+  level: number,
+  balance: BalanceTable,
+): number {
+  const slots = buildSlots(role, level, balance);
+  if (slots <= 0) return 0;
+  return slots * balance.buildQueueDepthPerSlot;
 }
 
 export function techCost(techId: TechId, balance: BalanceTable): number {
@@ -195,13 +219,11 @@ export function buildTicksRequired(
       Math.floor(ticks * balance.tech.rapid_deployment.buildTicksFactor),
     );
   }
-  // Shipyard levels speed production exponentially: ticks / growth^(L-1)
+  // Shipyard levels speed production linearly: ticks / (1 + factor*(L-1))
   if (role === "shipyard" && nodeLevel > 1) {
-    const growth = 1 + balance.roles.shipyard.buildProgressLevelFactor;
-    ticks = Math.max(
-      1,
-      Math.round(ticks / levelScale(nodeLevel, growth)),
-    );
+    const factor = balance.roles.shipyard.buildProgressLevelFactor;
+    const speed = 1 + factor * (nodeLevel - 1);
+    ticks = Math.max(1, Math.round(ticks / speed));
   }
   return ticks;
 }
@@ -221,8 +243,8 @@ export interface NodeProduction {
 
 /**
  * Mirrors EconomyExecution pulse math so the HUD can show rates without
- * waiting for the next bank tick. Level factors are exponential growth−1
- * (0.2 → ×1.2 per level above 1).
+ * waiting for the next bank tick. Level factors are linear
+ * (0.2 → +20% of base per level above 1).
  */
 export function nodeProduction(
   role: NodeRole,

@@ -143,7 +143,10 @@ export interface CombatResult {
   winnerPowerBefore: number;
   loserPowerBefore: number;
   winnerPowerRemaining: number;
+  winnerCompositionBefore: FleetComposition;
+  loserCompositionBefore: FleetComposition;
   winnerCompositionAfter: FleetComposition;
+  loserCompositionAfter: FleetComposition;
 }
 
 export interface AnnexationResult {

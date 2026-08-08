@@ -183,11 +183,56 @@ describe("MatchRoom", () => {
     );
     const inbox: ServerMessage[] = [];
     expect(room.join("human", "You", (m) => inbox.push(m)).ok).toBe(true);
+    // Ready alone must not auto-start when bots are pre-seeded (solo/watch use StartMatch).
     room.setReady("human", true);
+    expect(room.phase).toBe("lobby");
+    room.startMatch("human", 3);
     expect(room.phase).toBe("running");
     expect(inbox.some((m) => m.type === "MatchStart")).toBe(true);
     room.tickOnceForTests();
     expect(room.getTurnArchive().length).toBe(1);
+    room.stop();
+  });
+
+  it("starts a spectator watch match with hard bots and omniscient view", () => {
+    const room = new MatchRoom({
+      seed: 42,
+      roundTicks: 40,
+      turnIntervalMs: 10_000,
+      capacity: 8,
+      botCount: 7,
+    });
+    const inbox: ServerMessage[] = [];
+    expect(room.join("watcher", "Watcher", (m) => inbox.push(m)).ok).toBe(true);
+    room.setReady("watcher", true);
+    expect(room.phase).toBe("lobby");
+
+    room.startMatch("watcher", {
+      botFill: 7,
+      difficulty: "hard",
+      mapSize: "medium",
+      spectator: true,
+    });
+    expect(room.phase).toBe("running");
+
+    const start = inbox.find((m) => m.type === "MatchStart");
+    expect(start?.type).toBe("MatchStart");
+    if (start?.type !== "MatchStart") return;
+    expect(start.spectator).toBe(true);
+    // Omniscient: every map node is visible.
+    expect(start.view.visibleNodes.length).toBe(
+      Object.keys(start.map.nodes).length,
+    );
+    expect(start.view.self.displayName).toBe("Spectator");
+
+    room.tickOnceForTests();
+    const tick = inbox.filter((m) => m.type === "TickUpdate").at(-1);
+    expect(tick?.type).toBe("TickUpdate");
+    if (tick?.type === "TickUpdate" && tick.full) {
+      expect(tick.full.visibleNodes.length).toBe(
+        Object.keys(start.map.nodes).length,
+      );
+    }
     room.stop();
   });
 

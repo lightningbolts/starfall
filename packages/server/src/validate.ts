@@ -111,9 +111,19 @@ export function parseIntent(raw: unknown): Intent | null {
 }
 
 export function parseClientMessage(raw: unknown):
-  | { type: "Hello"; displayName: string; clientId?: string }
+  | {
+      type: "Hello";
+      displayName: string;
+      clientId?: string;
+    }
   | { type: "SetReady"; ready: boolean }
-  | { type: "StartMatch"; botCount: number }
+  | {
+      type: "StartMatch";
+      botCount: number;
+      difficulty?: "easy" | "normal" | "hard";
+      mapSize?: "small" | "medium" | "large";
+      spectator?: boolean;
+    }
   | { type: "Intent"; sequence: number; intent: Intent }
   | null {
   if (!isRecord(raw) || !isString(raw.type)) return null;
@@ -141,7 +151,21 @@ export function parseClientMessage(raw: unknown):
         return null;
       }
       const botCount = Math.max(0, Math.min(99, (raw2 as number) ?? 0));
-      return { type: "StartMatch", botCount };
+      const out: {
+        type: "StartMatch";
+        botCount: number;
+        difficulty?: "easy" | "normal" | "hard";
+        mapSize?: "small" | "medium" | "large";
+        spectator?: boolean;
+      } = { type: "StartMatch", botCount };
+      if (raw.difficulty === "easy" || raw.difficulty === "normal" || raw.difficulty === "hard") {
+        out.difficulty = raw.difficulty;
+      }
+      if (raw.mapSize === "small" || raw.mapSize === "medium" || raw.mapSize === "large") {
+        out.mapSize = raw.mapSize;
+      }
+      if (raw.spectator === true) out.spectator = true;
+      return out;
     }
     case "Intent": {
       if (!isNumber(raw.sequence) || !Number.isInteger(raw.sequence)) return null;

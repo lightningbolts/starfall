@@ -27,10 +27,17 @@ All values are **starting guesses**. Power-per-credit is near-constant across sh
 ## Upgrade formula
 
 ```
-cost(n) = base_cost × 1.22^(n − 1)   // n = 2, 3, 4, … (uncapped)
+cost(n) = base_cost × 1.22^min(n−2, growthLevels−1)   // n = target level ≥ 2
+growthLevels = 5   // exponential through L5→L6, then flat forever
 ```
 
-Level 1 = newly owned / unupgraded. No max level — only the geometric cost curve limits how high players push.
+Level 1 = newly owned / unupgraded. No max level — costs plateau after the soft cap.
+
+### Per-level outputs (linear)
+
+Outputs use `base + round(base × factor × (level − 1))`. Factors are the per-level fraction of base (e.g. 0.2 → +20% of base each level).
+
+Shipyard concurrent build slots = `level` (L1=1, L5=5). Homeworld has 1 fighter-only slot.
 
 ---
 
@@ -40,9 +47,11 @@ Wall-clock travel/build kept close to the old 2s-tick feel (1 hop per ~2s for fi
 
 | Ship | Credit cost | Power | Power/credit | Build ticks | Ticks per hop | Unlock | Hop wall-clock |
 |---|---|---|---|---|---|---|---|
-| Fighter | 10 | 10 | 1.0 | 20 | 20 | Shipyard | 2.0 s |
+| Fighter | 10 | 12 | 1.2 | 20 | 20 | Shipyard | 2.0 s |
 | Cruiser | 40 | 40 | 1.0 | 60 | 40 | Shipyard | 4.0 s |
-| Battleship | 120 | 120 | 1.0 | 160 | 80 | Shipyard + `heavy_warships` tech | 8.0 s |
+| Battleship | 120 | 90 | 0.75 | 160 | 80 | Shipyard + `heavy_warships` tech | 8.0 s |
+
+Soft RPS (composition-weighted, 0.85× penalty): fighters weak vs cruisers, cruisers vs battleships, battleships vs fighters.
 
 Mixed fleets move at the **slowest** ship’s speed unless an explicit split `composition` is provided on the move intent ([rulings.md](./rulings.md) §7).
 
@@ -85,26 +94,26 @@ Income uses a **1-second pulse** (every 10 ticks) so rates stay integer and read
 | Homeworld | 2 | Bank (direct) | 1 | 40 | 0.5 equiv. | Fighters only at 2× build ticks; cap must beat L1 shipyard garrison |
 | Core world | 2 | Bank (direct) | 3 | 40 | 0 | Primary pop |
 | Resource node | 4 | **Cargo stockpile** | 0 | 0 | 0 | Primary wealth via cargo ships |
-| Shipyard | 2 | Bank (direct) | 0 | 0 | 1 | Queue; levels = build speed + trickle |
+| Shipyard | 2 | Bank (direct) | 0 | 0 | level | Concurrent slots = level; speed + trickle scale linearly |
 | Relay | 0 | — | 0 | 0 | 0 | Vision |
 | Relic | 10 | **Cargo stockpile** | 0 | 0 | 0 | Wildcard cargo + score |
 
 These match the prior 2s-tick design’s *per-second* economy (resource was 8 / 2s → 4 / s).
 
-### Per-level multipliers (soft exponential)
+### Per-level multipliers (linear)
 
-Outputs use `base × (1 + factor)^(level − 1)`. Factors are growth−1 (e.g. 0.2 → ×1.2 per level). Costs use the same shape with `upgradeGrowth = 1.22`.
+Outputs use `base + round(base × factor × (level − 1))`. Factors are the per-level fraction of base (e.g. 0.2 → +20% of base each level). Garrison uses flat `garrisonBase + (level−1)×garrisonPerLevel`.
 
-| Role | What scales | Factor (growth−1) |
+| Role | What scales | Factor |
 |---|---|---|
-| Homeworld | Credits, pop pulse, pop cap, garrison | 0.20 / 0.15 / 0.12 / 0.10 |
-| Core world | Credits, pop pulse, pop cap, garrison | 0.12 / 0.22 / 0.18 / 0.08 |
-| Resource node | Cargo pulse, garrison | 0.25 / 0.08 |
-| Shipyard | Build speed, credit trickle, garrison | 0.20 / 0.12 / 0.08 |
-| Relay | Vision (+1 hop at L2, then every 2 lvls), garrison | vision steps / 0.10 |
-| Relic | Cargo pulse, garrison | 0.22 / 0.10 |
+| Homeworld | Credits, pop pulse, pop cap | 0.20 / 0.15 / 0.12 |
+| Core world | Credits, pop pulse, pop cap | 0.12 / 0.22 / 0.18 |
+| Resource node | Cargo pulse | 0.25 |
+| Shipyard | Build speed, credit trickle, **slots = level** | 0.20 / 0.12 |
+| Relay | Vision (+1 hop at L2, then every 2 lvls) | vision steps |
+| Relic | Cargo pulse | 0.22 |
 
-### Upgrade base costs (credits for level 2; then ×1.22)
+### Upgrade base costs (credits for level 2; ×1.22 through L5→L6, then flat)
 
 | Role | base_cost (→ L2) |
 |---|---|

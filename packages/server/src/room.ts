@@ -2,6 +2,7 @@ import {
   accumulateTelemetry,
   botIntents,
   buildPlayerView,
+  buildSpectatorView,
   computeScores,
   createMatch,
   createMatchTelemetry,
@@ -11,9 +12,10 @@ import {
   diffPlayerView,
   emptyTurn,
   executeNextTick,
-  policyForBotIndex,
   recommendedNodeCount,
+  resolveBotPolicy,
   type BotBrain,
+  type BotDifficulty,
   type CombatResult,
   type TickUpdates,
   type ClientId,
@@ -41,6 +43,8 @@ export interface SeatRuntime {
   ready: boolean;
   connected: boolean;
   isBot: boolean;
+  /** Omniscient watch seat — not a commanding player. */
+  isSpectator: boolean;
   /** Wall-clock ms when last disconnected; null if connected. */
   disconnectedAt: number | null;
   playerId: PlayerId | null;
@@ -48,6 +52,15 @@ export interface SeatRuntime {
   /** Intents accepted this turn (rate limit). */
   intentsThisTurn: number;
   rateLimitWarned: boolean;
+}
+
+export type MapSizePreset = "small" | "medium" | "large";
+
+export interface StartMatchOptions {
+  botFill?: number;
+  difficulty?: BotDifficulty;
+  mapSize?: MapSizePreset;
+  spectator?: boolean;
 }
 
 export interface MatchRoomOptions {
@@ -66,19 +79,31 @@ export interface MatchRoomOptions {
   telemetryPath?: string;
   /** Seat this many AI opponents in the lobby (ready immediately). */
   botCount?: number;
+  /** Default bot difficulty override (CLI). */
+  botDifficulty?: BotDifficulty;
 }
 
 const DEFAULTS = {
   capacity: 100,
   disconnectGraceMs: 60_000,
   turnIntervalMs: 100,
-  maxIntentsPerTurn: 8,
+  maxIntentsPerTurn: 24,
   fullSnapshotEvery: 50,
   botCount: 0,
 };
 
 /** Recent turns kept for debugging/replay. ~10 minutes at 100ms turns. */
 const TURN_ARCHIVE_LIMIT = 6000;
+
+export function nodeCountForMapSize(
+  players: number,
+  size: MapSizePreset = "medium",
+): number {
+  const base = recommendedNodeCount(players);
+  if (size === "small") return Math.max(players * 3, Math.round(base * 0.6));
+  if (size === "large") return Math.max(players * 3, Math.round(base * 2));
+  return base;
+}
 
 export class MatchRoom {
   readonly capacity: number;
@@ -112,18 +137,24 @@ export class MatchRoom {
   private playersMeta: MatchStartPlayers | null = null;
   private bots: BotBrain[] = [];
   readonly botCount: number;
+  readonly botDifficulty: BotDifficulty | null;
+  /** Active match tick interval (may be faster in spectator watch). */
+  private activeTurnIntervalMs: number;
+  private lastSpectatorView: PlayerView | null = null;
 
   constructor(opts: MatchRoomOptions = {}) {
     this.capacity = opts.capacity ?? DEFAULTS.capacity;
     this.disconnectGraceMs = opts.disconnectGraceMs ?? DEFAULTS.disconnectGraceMs;
     this.nodeCountFactor = opts.nodeCountFactor ?? null;
     this.turnIntervalMs = opts.turnIntervalMs ?? DEFAULTS.turnIntervalMs;
+    this.activeTurnIntervalMs = this.turnIntervalMs;
     this.maxIntentsPerTurn =
       opts.maxIntentsPerTurn ?? DEFAULTS.maxIntentsPerTurn;
     this.fullSnapshotEvery =
       opts.fullSnapshotEvery ?? DEFAULTS.fullSnapshotEvery;
     this.telemetryPath = opts.telemetryPath ?? null;
     this.botCount = Math.max(0, opts.botCount ?? DEFAULTS.botCount);
+    this.botDifficulty = opts.botDifficulty ?? null;
     this.fixedSeed = opts.seed !== undefined;
     this.seed = opts.seed ?? randomSeed();
     // 0 = unlimited (last player standing). Pass --ticks N for a timed score finish.
@@ -153,6 +184,7 @@ export class MatchRoom {
         ready: true,
         connected: true,
         isBot: true,
+        isSpectator: false,
         disconnectedAt: null,
         playerId: null,
         send: () => undefined,
@@ -271,6 +303,7 @@ export class MatchRoom {
       ready: false,
       connected: true,
       isBot: false,
+      isSpectator: false,
       disconnectedAt: null,
       playerId: null,
       send,
@@ -339,10 +372,12 @@ export class MatchRoom {
     if (!seat || seat.isBot || this.phase !== "lobby") return;
     seat.ready = ready;
     this.lobbyUpdate();
+    // Only auto-start multiplayer lobbies (2+ humans). Solo / Watch always
+    // call startMatch explicitly — otherwise pre-seeded bots + setReady would
+    // race and start a normal match before spectator/solo options arrive.
     const humans = [...this.seats.values()].filter((s) => !s.isBot);
     if (
-      humans.length >= 1 &&
-      this.seats.size >= 2 &&
+      humans.length >= 2 &&
       humans.every((s) => s.ready)
     ) {
       const host = this.hostClientId();
@@ -350,7 +385,10 @@ export class MatchRoom {
     }
   }
 
-  startMatch(requesterId: ClientId, botFill = 0): void {
+  startMatch(
+    requesterId: ClientId,
+    botFillOrOpts: number | StartMatchOptions = 0,
+  ): void {
     if (this.phase !== "lobby") return;
     const host = this.hostClientId();
     if (host !== requesterId) {
@@ -361,29 +399,57 @@ export class MatchRoom {
       });
       return;
     }
-    // Solo play: top the lobby up with AI so one human can start immediately.
+
+    const opts: StartMatchOptions =
+      typeof botFillOrOpts === "number"
+        ? { botFill: botFillOrOpts }
+        : botFillOrOpts;
+    const spectator = Boolean(opts.spectator);
+    const botFill = opts.botFill ?? 0;
+    const difficulty = opts.difficulty ?? this.botDifficulty;
+    const mapSize = opts.mapSize ?? "medium";
+
+    // Solo / watch: top the lobby up with AI.
+    // Spectators do not occupy a player seat, so allow filling up to capacity.
     if (botFill > 0) {
       const humans = [...this.seats.values()].filter((s) => !s.isBot).length;
       const existingBots = this.seats.size - humans;
-      this.seedBots(Math.max(0, botFill - existingBots));
+      const targetBots = spectator
+        ? Math.min(botFill, this.capacity - Math.max(1, humans))
+        : botFill;
+      this.seedBots(Math.max(0, targetBots - existingBots));
     }
-    if (this.seats.size < 2) {
+
+    for (const s of this.seats.values()) {
+      if (!s.isBot) s.isSpectator = spectator;
+    }
+
+    const playerSeats = [...this.seats.values()].filter(
+      (s) => !s.isSpectator || s.isBot,
+    );
+    // Spectators are not commanders — only bots (and non-spectator humans) play.
+    const roster: SeatRosterEntry[] = playerSeats
+      .filter((s) => (spectator ? s.isBot : true))
+      .map((s) => ({
+        clientId: s.clientId,
+        displayName: s.displayName,
+      }));
+
+    if (roster.length < 2) {
       this.seats.get(requesterId)?.send({
         type: "Error",
         code: "need_players",
-        message: "Need at least 2 players — add a bot or wait for someone to join",
+        message: spectator
+          ? "Need at least 2 bots to watch — raise bot count"
+          : "Need at least 2 players — add a bot or wait for someone to join",
       });
       return;
     }
 
-    const roster: SeatRosterEntry[] = [...this.seats.values()].map((s) => ({
-      clientId: s.clientId,
-      displayName: s.displayName,
-    }));
     const playerCount = roster.length;
     const nodeCount =
       this.nodeCountFactor === null
-        ? recommendedNodeCount(playerCount)
+        ? nodeCountForMapSize(playerCount, mapSize)
         : Math.max(
             Math.ceil(playerCount * this.nodeCountFactor),
             playerCount * 3,
@@ -407,19 +473,23 @@ export class MatchRoom {
     this.intentBuffer = [];
     this.memories.clear();
     this.lastViews.clear();
+    this.lastSpectatorView = null;
     this.markedDisconnected.clear();
     this.telemetry = createMatchTelemetry();
     this.prevEliminated = 0;
+    this.activeTurnIntervalMs = spectator
+      ? Math.max(25, Math.floor(this.turnIntervalMs / 2))
+      : this.turnIntervalMs;
 
     const playerIds = Object.keys(this.state.players) as PlayerId[];
     this.seatColorMap = seatColorsForPlayers(playerIds);
 
     for (const s of this.seats.values()) {
       const pid = this.state.clientToPlayer[s.clientId] ?? null;
-      s.playerId = pid;
+      s.playerId = s.isSpectator ? null : pid;
       s.intentsThisTurn = 0;
       s.rateLimitWarned = false;
-      if (pid) this.memories.set(pid, createVisionMemory());
+      if (pid && !s.isSpectator) this.memories.set(pid, createVisionMemory());
     }
 
     this.bots = [];
@@ -429,7 +499,7 @@ export class MatchRoom {
       this.bots.push({
         playerId: s.playerId,
         clientId: s.clientId,
-        policy: policyForBotIndex(idx),
+        policy: resolveBotPolicy(idx, difficulty),
         seq: 0,
       });
     }
@@ -446,7 +516,6 @@ export class MatchRoom {
       layout: { ...(this.state.map.layout ?? {}) },
     };
     if (Object.keys(this.mapPayload.layout).length < 2) {
-      // Should never happen after ensureMapLayout — keep payload valid
       const ids = Object.keys(this.mapPayload.nodes);
       this.mapPayload.layout = Object.fromEntries(
         ids.map((id, i) => {
@@ -468,8 +537,28 @@ export class MatchRoom {
       ]),
     );
 
+    const focusPlayerId = playerIds[0]!;
+
     for (const s of this.seats.values()) {
-      if (!s.playerId || !s.connected || s.isBot) continue;
+      if (!s.connected || s.isBot) continue;
+      if (s.isSpectator) {
+        const view = buildSpectatorView(this.state, this.config.balance);
+        this.lastSpectatorView = view;
+        s.send({
+          type: "MatchStart",
+          seed: this.seed,
+          playerId: focusPlayerId,
+          clientId: s.clientId,
+          map: this.mapPayload,
+          seatColors: this.seatColorMap,
+          players: this.playersMeta,
+          roundTicks: this.config.roundTicks(),
+          view,
+          spectator: true,
+        });
+        continue;
+      }
+      if (!s.playerId) continue;
       const memory = this.memories.get(s.playerId)!;
       const view = buildPlayerView(
         this.state,
@@ -493,15 +582,15 @@ export class MatchRoom {
 
     this.lobbyUpdate();
     console.log(
-      `Match started · seed ${this.seed}${this.fixedSeed ? " (fixed)" : ""} · ${playerCount} players · ${nodeCount} systems`,
+      `Match started · seed ${this.seed}${this.fixedSeed ? " (fixed)" : ""} · ${playerCount} players · ${nodeCount} systems${spectator ? " · spectator" : ""}${difficulty ? ` · bots=${difficulty}` : ""}`,
     );
-    this.timer = setInterval(() => this.endTurn(), this.turnIntervalMs);
+    this.timer = setInterval(() => this.endTurn(), this.activeTurnIntervalMs);
   }
 
   enqueueIntent(intent: StampedIntent): void {
     if (this.phase !== "running") return;
     const seat = this.seats.get(intent.clientId);
-    if (!seat?.connected || !seat.playerId) return;
+    if (!seat?.connected || !seat.playerId || seat.isSpectator) return;
     if (this.markedDisconnected.has(seat.playerId)) return;
     if (seat.intentsThisTurn >= this.maxIntentsPerTurn) {
       if (!seat.rateLimitWarned) {
@@ -645,7 +734,31 @@ export class MatchRoom {
     // Clients only need their own fogged view, so it is never broadcast.
 
     for (const s of this.seats.values()) {
-      if (!s.playerId || !s.connected || s.isBot) continue;
+      if (!s.connected || s.isBot) continue;
+
+      if (s.isSpectator) {
+        const view = buildSpectatorView(this.state, this.config.balance);
+        const prev = this.lastSpectatorView;
+        this.lastSpectatorView = view;
+        if (sendFull || !prev) {
+          s.send({
+            type: "TickUpdate",
+            full: view,
+            events: updates,
+            ...(ranks ? { ranks } : {}),
+          });
+        } else {
+          s.send({
+            type: "TickUpdate",
+            delta: diffPlayerView(prev, view),
+            events: updates,
+            ...(ranks ? { ranks } : {}),
+          });
+        }
+        continue;
+      }
+
+      if (!s.playerId) continue;
       const memory = this.memories.get(s.playerId);
       if (!memory) continue;
       const view = buildPlayerView(

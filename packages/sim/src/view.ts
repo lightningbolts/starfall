@@ -175,6 +175,71 @@ export function buildPlayerView(
   };
 }
 
+/**
+ * Omniscient view for watch-mode spectators — every node and fleet visible.
+ * `self` mirrors the highest-scoring living player for HUD continuity.
+ */
+export function buildSpectatorView(
+  state: GameState,
+  _balance: BalanceTable,
+): PlayerView {
+  const nodes: Record<NodeId, ViewNode> = {};
+  for (const [id, ns] of Object.entries(state.nodes)) {
+    nodes[id] = {
+      ...ns,
+      buildQueue: ns.buildQueue.map((b) => ({ ...b })),
+    };
+  }
+  const fleets: Record<FleetId, Fleet> = {};
+  for (const f of Object.values(state.fleets)) {
+    fleets[f.id] = {
+      ...f,
+      composition: { ...f.composition },
+      location: { ...f.location },
+    };
+  }
+  const cargoShips: Record<FleetId, CargoShip> = {};
+  for (const c of Object.values(state.cargoShips)) {
+    cargoShips[c.id] = {
+      ...c,
+      location: { ...c.location },
+      path: [...c.path],
+    };
+  }
+  const scores: Record<PlayerId, number> = {};
+  for (const p of Object.values(state.players)) {
+    scores[p.id] = p.score;
+  }
+  const living = Object.values(state.players)
+    .filter((p) => !p.eliminated)
+    .sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
+  const focus = living[0] ?? Object.values(state.players)[0];
+  if (!focus) {
+    throw new Error("spectator view requires players");
+  }
+  return {
+    tick: state.tick,
+    turnNumber: state.turnNumber,
+    visibleNodes: Object.keys(state.nodes),
+    nodes,
+    fleets,
+    cargoShips,
+    self: {
+      id: focus.id,
+      clientId: null,
+      displayName: "Spectator",
+      credits: focus.credits,
+      researched: [...focus.researched],
+      allies: [...focus.allies],
+      allianceProposals: [],
+      eliminated: false,
+      score: focus.score,
+      homeworldId: focus.homeworldId,
+    },
+    scores,
+  };
+}
+
 export function isFoggedNode(n: ViewNode): n is LastKnownNode {
   return "fogged" in n && n.fogged === true;
 }
