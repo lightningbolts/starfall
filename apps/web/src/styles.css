@@ -1459,9 +1459,10 @@ body.chronicle-active > #app {
 
 .chronicle-panel[data-panel="trends"],
 .chronicle-panel[data-panel="overlays"],
-.chronicle-panel[data-panel="military"] {
+.chronicle-panel[data-panel="military"],
+.chronicle-panel[data-panel="battles"] {
   position: absolute;
-  right: calc(0.75rem + 6.25rem);
+  right: calc(0.75rem + 6.75rem);
   width: min(300px, calc(100vw - 1.5rem));
   max-height: calc(100% - 1rem);
   z-index: 3;
@@ -1473,8 +1474,22 @@ body.chronicle-active > #app {
 
 .chronicle-panel[data-panel="military"] {
   top: 0.5rem;
-  width: min(360px, calc(100vw - 1.5rem));
+  width: min(520px, calc(100vw - 8rem));
   max-height: calc(100% - 1rem);
+}
+
+.chronicle-panel[data-panel="battles"] {
+  top: auto;
+  bottom: 0.75rem;
+  left: calc(0.75rem + min(340px, calc(100vw - 1.5rem)) + 0.5rem);
+  right: auto;
+  width: min(320px, 34vw);
+  max-height: min(42vh, calc(100% - 1rem));
+}
+
+.chronicle-panel[data-panel="battles"]:not([hidden]):not(.hidden) {
+  display: flex;
+  flex-direction: column;
 }
 
 .chronicle-panel[data-panel="overlays"] {
@@ -1537,6 +1552,28 @@ body.chronicle-active > #app {
   color: var(--sf-text-dim);
   margin-bottom: 0.25rem;
   padding: 0 0.2rem;
+}
+
+.ch-sortable {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  padding: 0;
+  margin: 0;
+  white-space: nowrap;
+}
+
+.ch-sortable:hover,
+.ch-sortable.is-sorted {
+  color: var(--sf-text);
+}
+
+.ch-roster-head .ch-sortable.is-sorted {
+  color: var(--sf-focus);
 }
 
 .ch-roster-body {
@@ -1711,17 +1748,34 @@ body.chronicle-active > #app {
   background: var(--elim-accent, var(--sf-danger));
 }
 
+.ch-mil-scroll {
+  overflow: auto;
+  max-height: min(58vh, calc(100% - 4rem));
+  margin: 0 -0.15rem;
+  padding: 0 0.15rem;
+}
+
 .ch-mil-table {
-  width: 100%;
+  width: max-content;
+  min-width: 100%;
   border-collapse: collapse;
-  font-size: 0.78rem;
+  font-size: 0.74rem;
 }
 
 .ch-mil-table th,
 .ch-mil-table td {
   text-align: left;
-  padding: 0.28rem 0.2rem;
+  padding: 0.28rem 0.28rem;
   border-bottom: 1px solid color-mix(in srgb, var(--sf-hud-border) 70%, transparent);
+  white-space: nowrap;
+}
+
+.ch-mil-table th.ch-sortable {
+  color: var(--sf-text-dim);
+}
+
+.ch-mil-table th.ch-sortable.is-sorted {
+  color: var(--sf-focus);
 }
 
 .ch-mil-table tr {
@@ -1737,21 +1791,87 @@ body.chronicle-active > #app {
   font-size: 0.72rem;
 }
 
-.ch-mil-matchups,
-.ch-mil-active {
+.ch-mil-matchups {
   margin-top: 0.7rem;
 }
 
-.ch-mil-matchups h3,
-.ch-mil-active h3 {
+.ch-mil-matchups h3 {
   margin: 0 0 0.35rem;
   font-size: 0.8rem;
 }
 
-.ch-mil-row,
-.ch-mil-eng {
+.ch-mil-row {
   font-size: 0.78rem;
   margin: 0.2rem 0;
+}
+
+.ch-rail-badge {
+  display: inline-block;
+  min-width: 1.1rem;
+  padding: 0 0.28rem;
+  margin-left: 0.2rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--sf-danger) 75%, var(--sf-void));
+  color: var(--sf-text);
+  font-size: 0.68rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.35;
+  text-align: center;
+}
+
+.ch-battles {
+  overflow: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: min(48vh, calc(100% - 2.5rem));
+}
+
+.ch-battles-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.ch-battle-card {
+  appearance: none;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  padding: 0.45rem 0.5rem;
+  border-radius: var(--sf-radius);
+  border: 1px solid color-mix(in srgb, var(--sf-danger) calc(var(--battle-intensity, 0.3) * 80%), var(--sf-hud-border));
+  background: color-mix(in srgb, var(--sf-danger) calc(var(--battle-intensity, 0.2) * 18%), transparent);
+  color: var(--sf-text);
+  font: inherit;
+}
+
+.ch-battle-card:hover {
+  border-color: var(--sf-focus);
+}
+
+.ch-battle-mode {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--sf-event-battle, var(--sf-focus));
+}
+
+.ch-battle-name {
+  font-weight: 600;
+  font-size: 0.85rem;
+  margin: 0.1rem 0;
+}
+
+.ch-battle-sides,
+.ch-battle-mix,
+.ch-battle-meta {
+  font-size: 0.75rem;
+  color: var(--sf-text-dim);
+}
+
+.ch-muted {
+  color: var(--sf-text-dim);
+  font-size: 0.72rem;
 }
 
 .ch-sel-devs,
@@ -1954,7 +2074,8 @@ body.chronicle-active > #app {
 @media (max-width: 800px) {
   .chronicle-panel[data-panel="trends"],
   .chronicle-panel[data-panel="overlays"],
-  .chronicle-panel[data-panel="military"] {
+  .chronicle-panel[data-panel="military"],
+  .chronicle-panel[data-panel="battles"] {
     right: 0.75rem;
   }
 
@@ -1963,6 +2084,15 @@ body.chronicle-active > #app {
   .chronicle-panel[data-panel="trends"],
   .chronicle-panel[data-panel="military"] {
     top: 3rem;
+  }
+
+  .chronicle-panel[data-panel="battles"] {
+    left: 0.75rem;
+    right: 0.75rem;
+    width: auto;
+    bottom: 0.75rem;
+    top: auto;
+    max-height: 36vh;
   }
 
   .chronicle-left {

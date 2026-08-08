@@ -2,11 +2,13 @@ import {
   archetypeLabel,
   effectiveCombatPower,
   formatComposition,
+  MACRO_SHIP_TYPES,
   militaryTechScore,
   PLANETARY_LABEL,
   type EmpireId,
   type InterpolatedSnapshot,
   type MacroEvent,
+  type MacroShipType,
   type SystemId,
 } from "@starfall/macro-sim";
 import { empireSwatchCss } from "./palette.js";
@@ -25,12 +27,32 @@ export type OverlayId =
   | "frontiers"
   | "lanes"
   | "labels";
+
 export type RosterSort =
   | "territory"
   | "population"
   | "credits"
   | "garrison"
-  | "name";
+  | "name"
+  | "archetype";
+
+export type MilitarySort =
+  | "name"
+  | "power"
+  | "tech"
+  | "doctrine"
+  | MacroShipType;
+
+const SHIP_COL: Record<MacroShipType, string> = {
+  corvette: "Cv",
+  destroyer: "D",
+  cruiser: "Cr",
+  battleship: "B",
+  carrier: "Ca",
+  raider: "R",
+  dreadnought: "Dr",
+  defense_platform: "P",
+};
 
 export interface DashboardState {
   focusEmpireId: EmpireId | null;
@@ -38,6 +60,8 @@ export interface DashboardState {
   pinTopN: number;
   rosterSort: RosterSort;
   rosterAsc: boolean;
+  militarySort: MilitarySort;
+  militaryAsc: boolean;
   overlays: Record<OverlayId, boolean>;
   panels: {
     roster: boolean;
@@ -45,6 +69,7 @@ export interface DashboardState {
     trends: boolean;
     overlays: boolean;
     military: boolean;
+    battles: boolean;
   };
   paused: boolean;
   speed: 1 | 2 | 4 | 10;
@@ -70,6 +95,8 @@ export function createDashboardState(): DashboardState {
     pinTopN: 8,
     rosterSort: "territory",
     rosterAsc: false,
+    militarySort: "power",
+    militaryAsc: false,
     overlays: {
       contested: true,
       diplomacy: true,
@@ -84,6 +111,7 @@ export function createDashboardState(): DashboardState {
       trends: false,
       overlays: false,
       military: false,
+      battles: false,
     },
     paused: false,
     speed: 1,
@@ -198,6 +226,7 @@ export class MacroDashboard {
       this.renderRoster(view);
       this.renderTrends(view);
       this.renderMilitary(view);
+      this.renderBattles(view);
       this.renderFocusLabel(view);
       this.renderSelection(view);
     }
@@ -264,29 +293,53 @@ export class MacroDashboard {
       this.changed();
     });
 
-    this.root.querySelector("#ch-sort")?.addEventListener("change", (e) => {
-      this.state.rosterSort = (e.target as HTMLSelectElement)
-        .value as RosterSort;
-      this.changed();
-    });
-
-    this.root.querySelector("#ch-sort-dir")?.addEventListener("click", () => {
-      this.state.rosterAsc = !this.state.rosterAsc;
-      this.changed();
-    });
-
     this.root.querySelector("#ch-clear-focus")?.addEventListener("click", () => {
       this.state.focusEmpireId = null;
       this.changed();
     });
 
-    // One delegated handler; rows are persistent so clicks never land on a
-    // node that was replaced mid-gesture.
-    this.rosterBody?.addEventListener("click", (e) => {
-      const row = (e.target as HTMLElement).closest<HTMLElement>("[data-empire]");
-      if (!row) return;
-      const id = row.dataset.empire as EmpireId;
-      this.setFocus(this.state.focusEmpireId === id ? null : id);
+    // Wikipedia-style column sort + persistent row focus (delegation).
+    this.root.addEventListener("click", (e) => {
+      const target = e.target as HTMLElement;
+
+      const rosterHead = target.closest<HTMLElement>("[data-roster-sort]");
+      if (rosterHead) {
+        const key = rosterHead.dataset.rosterSort as RosterSort;
+        if (this.state.rosterSort === key) {
+          this.state.rosterAsc = !this.state.rosterAsc;
+        } else {
+          this.state.rosterSort = key;
+          this.state.rosterAsc = key === "name" || key === "archetype";
+        }
+        this.changed();
+        return;
+      }
+
+      const milHead = target.closest<HTMLElement>("[data-mil-sort]");
+      if (milHead) {
+        const key = milHead.dataset.milSort as MilitarySort;
+        if (this.state.militarySort === key) {
+          this.state.militaryAsc = !this.state.militaryAsc;
+        } else {
+          this.state.militarySort = key;
+          this.state.militaryAsc = key === "name" || key === "doctrine";
+        }
+        this.changed();
+        return;
+      }
+
+      const milRow = target.closest<HTMLElement>("[data-mil-empire]");
+      if (milRow) {
+        const id = milRow.dataset.milEmpire as EmpireId;
+        this.setFocus(this.state.focusEmpireId === id ? null : id);
+        return;
+      }
+
+      const row = target.closest<HTMLElement>("[data-empire]");
+      if (row && this.rosterBody?.contains(row)) {
+        const id = row.dataset.empire as EmpireId;
+        this.setFocus(this.state.focusEmpireId === id ? null : id);
+      }
     });
   }
 
@@ -323,22 +376,31 @@ export class MacroDashboard {
           Number(btn.dataset.speed) === this.state.speed && !this.state.paused,
         );
       });
-    const dir = this.root.querySelector("#ch-sort-dir");
-    if (dir) dir.textContent = this.state.rosterAsc ? "↑" : "↓";
     for (const key of Object.keys(this.state.overlays) as OverlayId[]) {
       const input = this.root.querySelector<HTMLInputElement>(
         `[data-overlay="${key}"]`,
       );
       if (input) input.checked = this.state.overlays[key];
     }
-    const sort = this.root.querySelector<HTMLSelectElement>("#ch-sort");
-    if (sort && sort.value !== this.state.rosterSort) {
-      sort.value = this.state.rosterSort;
-    }
     const pin = this.root.querySelector<HTMLSelectElement>("#ch-pin-n");
     if (pin && pin.value !== String(this.state.pinTopN)) {
       pin.value = String(this.state.pinTopN);
     }
+    this.syncRosterHeaders();
+  }
+
+  private syncRosterHeaders(): void {
+    this.root.querySelectorAll<HTMLElement>("[data-roster-sort]").forEach((el) => {
+      const key = el.dataset.rosterSort as RosterSort;
+      const active = key === this.state.rosterSort;
+      el.classList.toggle("is-sorted", active);
+      el.dataset.sortDir = active ? (this.state.rosterAsc ? "asc" : "desc") : "";
+      const label = el.dataset.label ?? el.textContent?.replace(/[↑↓]\s*$/, "").trim() ?? "";
+      el.dataset.label = label;
+      el.textContent = active
+        ? `${label} ${this.state.rosterAsc ? "↑" : "↓"}`
+        : label;
+    });
   }
 
   private ensureRow(id: EmpireId): RosterRow {
@@ -378,14 +440,14 @@ export class MacroDashboard {
     const ordered = [...view.empireOrder].sort((a, b) => {
       const ea = view.empires[a]!;
       const eb = view.empires[b]!;
-      if (sort === "name") {
-        return this.state.rosterAsc
-          ? ea.name.localeCompare(eb.name)
-          : eb.name.localeCompare(ea.name);
-      }
-      return this.state.rosterAsc
-        ? ea[sort] - eb[sort]
-        : eb[sort] - ea[sort];
+      let cmp = 0;
+      if (sort === "name") cmp = ea.name.localeCompare(eb.name);
+      else if (sort === "archetype") {
+        cmp = archetypeLabel(ea.archetype).localeCompare(
+          archetypeLabel(eb.archetype),
+        );
+      } else cmp = ea[sort] - eb[sort];
+      return this.state.rosterAsc ? cmp : -cmp;
     });
 
     const pinned = ordered.slice(0, this.state.pinTopN);
@@ -404,13 +466,13 @@ export class MacroDashboard {
       row.root.classList.toggle("is-focus", this.state.focusEmpireId === id);
       row.root.classList.toggle("is-dead", !empire.alive);
       row.root.style.display = "";
-      // Appending an existing node moves it, so this reorders in place.
       body.appendChild(row.root);
     }
 
     for (const [id, row] of this.rows) {
       if (!pinnedSet.has(id)) row.root.style.display = "none";
     }
+    this.syncRosterHeaders();
   }
 
   private renderFeed(view: InterpolatedSnapshot, newEvents: MacroEvent[]): void {
@@ -553,21 +615,52 @@ export class MacroDashboard {
   private renderMilitary(view: InterpolatedSnapshot): void {
     const host = this.root.querySelector("#ch-military");
     if (!host) return;
+
+    const sort = this.state.militarySort;
     const alive = [...view.empireOrder]
       .filter((id) => view.empires[id]!.alive)
-      .sort(
-        (a, b) => view.empires[b]!.fleetPower - view.empires[a]!.fleetPower,
-      );
+      .sort((a, b) => {
+        const ea = view.empires[a]!;
+        const eb = view.empires[b]!;
+        let cmp = 0;
+        if (sort === "name") cmp = ea.name.localeCompare(eb.name);
+        else if (sort === "power") cmp = ea.fleetPower - eb.fleetPower;
+        else if (sort === "tech") {
+          cmp =
+            militaryTechScore(ea.researched) - militaryTechScore(eb.researched);
+        } else if (sort === "doctrine") {
+          cmp = archetypeLabel(ea.archetype).localeCompare(
+            archetypeLabel(eb.archetype),
+          );
+        } else {
+          cmp = (ea.fleet[sort] ?? 0) - (eb.fleet[sort] ?? 0);
+        }
+        return this.state.militaryAsc ? cmp : -cmp;
+      });
+
     const focus = this.state.focusEmpireId;
+    const head = (key: MilitarySort, label: string): string => {
+      const active = this.state.militarySort === key;
+      const arrow = active ? (this.state.militaryAsc ? " ↑" : " ↓") : "";
+      return `<th class="ch-sortable${active ? " is-sorted" : ""}" data-mil-sort="${key}" title="Sort by ${label}">${label}${arrow}</th>`;
+    };
+
+    const shipHeads = MACRO_SHIP_TYPES.map((t) =>
+      head(t, SHIP_COL[t]),
+    ).join("");
+
     const rows = alive
-      .slice(0, 16)
+      .slice(0, Math.max(this.state.pinTopN, 16))
       .map((id) => {
         const e = view.empires[id]!;
         const tech = militaryTechScore(e.researched);
+        const ships = MACRO_SHIP_TYPES.map(
+          (t) => `<td class="ch-mono">${e.fleet[t] ?? 0}</td>`,
+        ).join("");
         return `<tr class="${focus === id ? "is-focus" : ""}" data-mil-empire="${id}">
           <td><span class="ch-swatch" style="background:${empireCss(e)}"></span>${escapeHtml(e.name)}</td>
           <td>${fmt(e.fleetPower)}</td>
-          <td class="ch-mono">${escapeHtml(formatComposition(e.fleet))}</td>
+          ${ships}
           <td>${tech}</td>
           <td>${escapeHtml(archetypeLabel(e.archetype))}</td>
         </tr>`;
@@ -590,29 +683,69 @@ export class MacroDashboard {
         .join("")}</div>`;
     }
 
-    const engagements: string[] = [];
+    host.innerHTML = `
+      <div class="ch-mil-scroll">
+        <table class="ch-mil-table">
+          <thead><tr>
+            ${head("name", "Empire")}
+            ${head("power", "Power")}
+            ${shipHeads}
+            ${head("tech", "Tech")}
+            ${head("doctrine", "Doctrine")}
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      <p class="ch-hint">Click a column header to sort; click again to reverse.</p>
+      ${matchup}
+    `;
+  }
+
+  private renderBattles(view: InterpolatedSnapshot): void {
+    const host = this.root.querySelector("#ch-battles");
+    const badge = this.root.querySelector<HTMLElement>("#ch-battles-badge");
+    if (!host) return;
+
+    type EngRow = {
+      intensity: number;
+      html: string;
+    };
+    const rows: EngRow[] = [];
     for (const sid of view.systemOrder) {
       const eng = view.systems[sid]!.engagement;
       if (!eng) continue;
       const name = view.geometry.byId[sid]?.name ?? sid;
-      engagements.push(
-        `<div class="ch-mil-eng" style="opacity:${0.45 + eng.intensity * 0.55}"><b>${escapeHtml(eng.mode)}</b> ${escapeHtml(name)} · ${eng.ticksRemaining}t · ${escapeHtml(view.empires[eng.attackerId]?.name ?? "?")} vs ${escapeHtml(view.empires[eng.defenderId]?.name ?? "?")}</div>`,
-      );
+      const total =
+        eng.ticksElapsed + eng.ticksRemaining || 1;
+      const progress = Math.round((eng.ticksElapsed / total) * 100);
+      rows.push({
+        intensity: eng.intensity,
+        html: `<button type="button" class="ch-battle-card" data-battle-system="${sid}" style="--battle-intensity:${eng.intensity}">
+          <div class="ch-battle-mode">${escapeHtml(eng.mode)} · ${Math.round(eng.intensity * 100)}%</div>
+          <div class="ch-battle-name">${escapeHtml(name)}</div>
+          <div class="ch-battle-sides">${escapeHtml(view.empires[eng.attackerId]?.name ?? "?")} vs ${escapeHtml(view.empires[eng.defenderId]?.name ?? "?")}</div>
+          <div class="ch-battle-mix ch-muted">${escapeHtml(formatComposition(eng.committedA))} vs ${escapeHtml(formatComposition(eng.committedB))}</div>
+          <div class="ch-battle-meta">${eng.ticksRemaining}t left · ${progress}%</div>
+        </button>`,
+      });
     }
-    engagements.sort((a, b) => b.length - a.length);
+    rows.sort((a, b) => b.intensity - a.intensity);
 
-    host.innerHTML = `
-      <table class="ch-mil-table">
-        <thead><tr><th>Empire</th><th>Power</th><th>Fleet</th><th>Tech</th><th>Doctrine</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-      ${matchup}
-      <div class="ch-mil-active"><h3>Active engagements</h3>${engagements.slice(0, 8).join("") || "<p class='ch-hint'>No major battles right now.</p>"}</div>
-    `;
-    host.querySelectorAll<HTMLElement>("[data-mil-empire]").forEach((row) => {
-      row.addEventListener("click", () => {
-        const id = row.dataset.milEmpire as EmpireId;
-        this.setFocus(this.state.focusEmpireId === id ? null : id);
+    if (badge) {
+      badge.textContent = rows.length ? String(rows.length) : "";
+      badge.hidden = rows.length === 0;
+    }
+
+    host.innerHTML = rows.length
+      ? `<div class="ch-battles-list">${rows.map((r) => r.html).join("")}</div>`
+      : `<p class="ch-hint">No active engagements.</p>`;
+
+    host.querySelectorAll<HTMLElement>("[data-battle-system]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const sid = btn.dataset.battleSystem as SystemId;
+        this.setSelectedSystem(sid);
+        const owner = view.systems[sid]?.ownerId ?? null;
+        if (owner) this.setFocus(owner);
       });
     });
   }
@@ -765,6 +898,7 @@ function shellHtml(): string {
       <button type="button" class="rail-tab is-active" data-panel-toggle="feed">Feed</button>
       <button type="button" class="rail-tab" data-panel-toggle="trends">Trends</button>
       <button type="button" class="rail-tab" data-panel-toggle="military">Military</button>
+      <button type="button" class="rail-tab" data-panel-toggle="battles">Battles <span id="ch-battles-badge" class="ch-rail-badge" hidden></span></button>
       <button type="button" class="rail-tab" data-panel-toggle="overlays">Overlays</button>
     </nav>
     <div class="chronicle-left">
@@ -772,14 +906,6 @@ function shellHtml(): string {
         <div class="ch-panel-head">
           <h2>Empires</h2>
           <div class="ch-tools">
-            <select id="ch-sort" aria-label="Sort empires">
-              <option value="territory">Systems</option>
-              <option value="population">Population</option>
-              <option value="credits">Credits</option>
-              <option value="garrison">Garrison</option>
-              <option value="name">Name</option>
-            </select>
-            <button type="button" class="btn btn-compact" id="ch-sort-dir" aria-label="Sort direction">↓</button>
             <select id="ch-pin-n" aria-label="How many empires to pin">
               <option value="5">Top 5</option>
               <option value="8">Top 8</option>
@@ -789,8 +915,14 @@ function shellHtml(): string {
             </select>
           </div>
         </div>
-        <div class="ch-roster-head">
-          <span></span><span>Name</span><span>Archetype</span><span>Sys</span><span>Pop</span><span>¢</span><span>Gar</span>
+        <div class="ch-roster-head" role="row">
+          <span></span>
+          <button type="button" class="ch-sortable" data-roster-sort="name" data-label="Name">Name</button>
+          <button type="button" class="ch-sortable" data-roster-sort="archetype" data-label="Archetype">Archetype</button>
+          <button type="button" class="ch-sortable" data-roster-sort="territory" data-label="Sys">Sys</button>
+          <button type="button" class="ch-sortable" data-roster-sort="population" data-label="Pop">Pop</button>
+          <button type="button" class="ch-sortable" data-roster-sort="credits" data-label="¢">¢</button>
+          <button type="button" class="ch-sortable" data-roster-sort="garrison" data-label="Gar">Gar</button>
         </div>
         <div id="ch-roster-body" class="ch-roster-body"></div>
         <div class="ch-focus-row">
@@ -810,6 +942,10 @@ function shellHtml(): string {
     <aside class="chronicle-panel" data-panel="military" hidden>
       <h2>Military</h2>
       <div id="ch-military"></div>
+    </aside>
+    <aside class="chronicle-panel" data-panel="battles" hidden>
+      <h2>Active engagements</h2>
+      <div id="ch-battles" class="ch-battles"></div>
     </aside>
     <aside class="chronicle-panel" data-panel="overlays" hidden>
       <h2>Overlays</h2>
