@@ -300,11 +300,13 @@ competitive map (`renderer.ts`) and Chronicle (`mapView.ts` + dashboard).
 | `--sf-combat-flash` | `#f5f2ea` | Capture pulse |
 | `--sf-hud-border` | `#2a3344` | Panel borders |
 
-**Chronicle empire colors** derive from each empire's `colorHue` via
-`empireFill` / `empireAccent` / `empireSwatchCss` in `palette.ts` — the map
-territory rim and the roster swatch must always agree.
+**Chronicle empire colors** use a curated HSL swatch bank (greys, browns, earth,
+jewel tones) stored as `colorHue` / `colorSat` / `colorLight`. `empireFill` /
+`empireAccent` / `empireSwatchCss` in `palette.ts` consume the full triple so
+the map territory rim and the roster swatch always agree. Event cue tokens
+(`--sf-event-*`) tint feed lines and map pulses.
 
 **Chronicle map stack** (see [macro-spectator.md](./macro-spectator.md)): seeded
 nebula + parallax starfield → territory coverage field (blobby fills, glowing
-rims, no cell edges) → hyperlanes → contested border quads → star sprites /
-capital rings → diplomacy arcs → DOM name labels.
+rims, no cell edges) → hyperlanes → contested border quads (intensity-scaled) →
+star sprites / capital rings → diplomacy arcs → DOM name labels.

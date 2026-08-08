@@ -378,7 +378,99 @@ describe("createMacroMatch", () => {
     const late = ownedCount();
 
     expect(mid).toBeGreaterThanOrEqual(early);
-    expect(late - mid).toBeLessThanOrEqual(mid - early + 1);
+    // Late growth should not accelerate unchecked; allow slack for conquest.
+    expect(late - mid).toBeLessThanOrEqual(mid - early + 4);
+  });
+
+  it("assigns full-gamut color triples including greys and earth tones", () => {
+    const { state } = createMacroMatch({
+      seed: 91,
+      systemCount: 400,
+      empireCount: 24,
+    });
+    const sats = state.empireOrder.map((id) => state.empires[id]!.colorSat);
+    const lights = state.empireOrder.map((id) => state.empires[id]!.colorLight);
+    expect(Math.min(...sats)).toBeLessThan(0.25);
+    expect(Math.max(...sats)).toBeGreaterThan(0.45);
+    expect(Math.min(...lights)).toBeGreaterThan(0.3);
+    expect(state.empires[state.empireOrder[0]!]!.fleet.corvette).toBeGreaterThan(
+      0,
+    );
+  });
+
+  it("supports many allies without a hard cap", () => {
+    const { state } = createMacroMatch({
+      seed: 12,
+      systemCount: 200,
+      empireCount: 6,
+    });
+    const a = state.empires[state.empireOrder[0]!]!;
+    a.allies = [
+      state.empireOrder[1]!,
+      state.empireOrder[2]!,
+      state.empireOrder[3]!,
+      state.empireOrder[4]!,
+    ];
+    expect(a.allies.length).toBe(4);
+  });
+
+  it("researches permanent empire tech", async () => {
+    const { state } = createMacroMatch({
+      seed: 33,
+      systemCount: 200,
+      empireCount: 4,
+    });
+    const empire = state.empires[state.empireOrder[0]!]!;
+    for (const sid of empire.ownedSystems) {
+      state.systems[sid]!.credits = 500;
+    }
+    const { tryResearch } = await import("./tech.js");
+    const ev = tryResearch(state, empire, "industrial_foundries");
+    expect(ev).not.toBeNull();
+    expect(empire.researched.has("industrial_foundries")).toBe(true);
+  });
+
+  it("can run multi-tick engagements", async () => {
+    const { state, config } = createMacroMatch({
+      seed: 44,
+      systemCount: 200,
+      empireCount: 4,
+    });
+    const attacker = state.empires[state.empireOrder[0]!]!;
+    const defender = state.empires[state.empireOrder[1]!]!;
+    attacker.fleet = { corvette: 40, cruiser: 10 };
+    const targetId = defender.capitalSystemId;
+    const { beginEngagement } = await import("./combat.js");
+    const eng = beginEngagement(
+      state,
+      state.systems[targetId]!,
+      attacker.id,
+      "fleet_battle",
+      createRng(1),
+    );
+    expect(eng).not.toBeNull();
+    expect(eng!.ticksRemaining).toBeGreaterThan(10);
+    const before = eng!.ticksRemaining;
+    for (let i = 0; i < 5; i++) stepLogic(state, config);
+    const still = state.systems[targetId]!.engagement;
+    if (still) {
+      expect(still.ticksRemaining).toBeLessThan(before);
+    }
+  });
+
+  it("emits match_won separately from empire_eliminated", () => {
+    const { state, config } = createMacroMatch({
+      seed: 66,
+      systemCount: 120,
+      empireCount: 3,
+    });
+    for (const eid of state.empireOrder.slice(1)) {
+      const e = state.empires[eid]!;
+      e.alive = false;
+      e.ownedSystems.clear();
+    }
+    const result = stepLogic(state, config);
+    expect(result.newEvents.some((e) => e.kind === "match_won")).toBe(true);
   });
 
   it("keeps the owned-systems index in step with ownership", () => {

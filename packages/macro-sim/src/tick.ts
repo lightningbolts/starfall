@@ -1,6 +1,10 @@
 import { runBotDecisions } from "./bots.js";
 import { resolveContestedFronts } from "./combat.js";
-import { applyEconomyTick, decayEmpireModifiers } from "./economy.js";
+import {
+  applyEconomyTick,
+  applyEmpireEconomyPulse,
+  decayEmpireModifiers,
+} from "./economy.js";
 import { maybeSpawnRandomEvent } from "./events.js";
 import { emit } from "./log.js";
 import { createRng } from "./rng.js";
@@ -34,6 +38,9 @@ export function stepLogic(state: MacroState, config: MacroConfig): StepResult {
       const empire = system.ownerId ? state.empires[system.ownerId] : undefined;
       applyEconomyTick(system, empire, config, rng());
     }
+    for (const eid of state.empireOrder) {
+      applyEmpireEconomyPulse(state, state.empires[eid]!);
+    }
   }
   for (const eid of state.empireOrder) {
     decayEmpireModifiers(state.empires[eid]!);
@@ -62,7 +69,7 @@ export function stepLogic(state: MacroState, config: MacroConfig): StepResult {
       newEvents.push(
         emit(state, {
           tick: state.tick,
-          kind: "empire_eliminated",
+          kind: "match_won",
           empireIds: [winner.id],
           systemId: null,
           text: `${winner.name} stands alone across the galaxy.`,

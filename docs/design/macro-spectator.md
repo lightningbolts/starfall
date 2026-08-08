@@ -8,65 +8,77 @@ A separate mode from the competitive real-time game — same universe theme, dif
 
 ## 1. Scale and entity model
 
-- **Simulated unit: star systems.** Each system holds: owner, population, credits, garrison strength, persistent name, star class, hyperlane links, and (if on a frontier) a contested-% value.
+- **Simulated unit: star systems.** Each system holds: owner, population, credits, garrison strength, planetary developments, defense mix, optional active engagement, persistent name, star class, hyperlane links, and (if on a frontier) a contested-% value.
 - **Territory cells are render-only.** Voronoi cells around each star rasterize into a soft empire coverage field (blobby fills + glowing rims). Cell edges are never stroked.
-- **Hyperlanes** form a planar, connected graph (k-nearest candidates, short-first acceptance with degree caps, MST connectivity, a few loop-forming extras). Combat and colonization only travel along these links.
+- **Hyperlanes** form a planar, connected graph. Combat and colonization only travel along these links.
 - **AI empire count stays modest** — roughly a dozen to a few dozen empires so each grows a readable blob of territory.
+- **Fleets** are empire-level compositions (corvette → dreadnought + defense platforms). Contested fronts remain the territorial mechanism; engagements resolve combat over many ticks.
 
 ### Playtest defaults
 
 | Parameter | Value |
 |---|---|
-| Logic tick interval | **100ms** at 1× (same cadence as competitive; pause / 2× / 4× allowed) |
+| Logic tick interval | **100ms** at 1× (pause / 1× / 2× / 4× / **10×**) |
 | Economy pulse | every **10** logic ticks (~1s) |
 | Bot cadence | every **5** logic ticks |
-| Production variance | **±10%** per economy pulse |
+| Production variance | **±14%** per economy pulse |
 | Systems (small / medium / large) | **600 / 1200 / 2400** |
 | Empire count | `clamp(round(systems / 50), 12, 48)` |
-| Starting territory | **capital system only**; wilderness is unowned until empires expand |
-| Colonization | credit cost from adjacent owned systems; cost scales with owned count so expansion decelerates |
+| Starting territory | **capital system only** |
+| Contested flip | ~**0.72**; drift scale ~**0.01** |
+| Event chance / tick | ~**0.02** |
 | Render interpolation | ease-in-out cubic between last and next snapshots |
 
-## 2. Bot archetypes
+## 2. Bot personalities
 
-| Archetype | Bias |
+Twelve archetypes: conqueror, aggressive, reckless, cautious, strategist, opportunistic, diplomat, loyal, xenophobe, technocrat, isolationist, wildcard.
+
+Traits ∈ [0, 1]: `aggression`, `loyalty`, `risk`, `greed`, `ambition`, `xenophobia`, `curiosity`.
+
+- **No hard ally cap.** Soft pressure raises break chance as webs grow; xenophobes / isolationists rarely pact; diplomats accumulate many allies.
+- Conquerors / high ambition keep expanding and finishing wounded empires.
+- Technocrats prioritize research; isolationists reinforce and avoid war.
+
+## 3. Tech (empire + planetary)
+
+**Empire tech** (~20 techs, 4 flat tiers): permanent `Empire.researched` unlocks — industry, colony admin, militia, archives, megafarms, fortress worlds, diplomacy, scanners, escorts, war mobilization, planetary shields (doctrine), capital shipyards, xenology, singularity labs, tactical AI, hegemony, eternal archives, iron curtain, pax federation, supercapital frame.
+
+**Planetary developments** (max 4 per system): agro domes, mining spires, orbital batteries, shipyard ring, research campus, fortress complex, trade hub, plague hospitals, hidden arsenals. Mostly stripped on conquest.
+
+Breakthrough events often grant a permanent empire tech.
+
+## 4. Combat systems
+
+Tick-based **engagements** with variable duration:
+
+| Mode | Cadence |
 |---|---|
-| Aggressive expansionist | High risk, low loyalty, attacks when favorable |
-| Cautious turtle | Over-invests in garrison, rarely attacks first |
-| Opportunistic backstabber | Allies readily, breaks when ally is overextended |
-| Loyal builder | Sticks with allies, prioritizes joint defense |
-| Wildcard | Randomized trait weights per game |
+| Border skirmish | Short |
+| Fleet battle | Medium–long; scales with force size / parity |
+| Siege | Longest; fortress / capital / platforms |
+| Raid | Short burst |
 
-Traits: `aggression`, `loyalty`, `risk`, `greed` ∈ [0, 1]. Decision points: expand (multi-claim when rich), reinforce, propose/break alliance, pressure a border fight.
+Resolution uses fleet RPS + tactics/tech/doctrine/home advantage so underdogs can win. Map front thickness/brightness scales with engagement **intensity**. Events: `fleet_battle`, `border_clash`, plus existing front/capital collapses.
 
-## 3. Tick model
+## 5. Randomization / events
 
-See [ADR 003](../adr/003-macro-tick-split.md). Logic ticks run at **100ms** (competitive cadence); the client still interpolates every frame so borders and counters ease between snapshots.
-
-## 4. Randomization
-
-- **Production variance:** each system's per-tick output × uniform multiplier in [0.9, 1.1].
-- **Random events:** weighted occurrences (production surge, rebellion, relic discovery, pirate raid, natural disaster). Temporary or one-shot modifiers; every event emits a ticker line with a monotonic sequence id.
-
-## 5. Combat and borders
-
-Adjacent hostile systems compare aggregate garrison and shift a `contested.pct` front over time along the real shared border segment. Decisive shifts (front collapses, capital falls) are promoted to the event feed.
+Weighted world events: production surge, rebellion, relic, pirate raid, disaster, offensive blitz, defensive stronghold, plague, robbery, tech breakthrough, coup/regime change. Economy includes sprawl upkeep, ship upkeep, soft pop ceilings / famine.
 
 ## 6. Map presentation
 
-- Seeded nebula + parallax starfield background.
-- Empire territory as a coverage-field composite (no visible tile edges).
-- Hyperlanes, contested fronts on true border edges, instanced star sprites, capital rings, bezier diplomacy arcs.
-- DOM labels for empire and system names with zoom-based fading; zoom-to-cursor camera.
+- Seeded nebula + parallax starfield (territory shaders unchanged).
+- Empire colors from a curated **HSL swatch bank** (greys, browns, earth, jewel tones) stored as `colorHue` / `colorSat` / `colorLight`.
+- Contested fronts intensity-scaled; diplomacy arcs brighter and above stars.
+- Event-colored system pulses; elimination banner (5s + progress) at center top.
 
 ## 7. Dashboard
 
-Toggleable panels: empire roster (sortable, persistent rows), event feed (sequence-deduped), map overlays (diplomacy, contested fronts, frontiers, lanes, labels), multi-series trend graphs, filters (focus one empire, pin top N). Seed shown in the top bar; keyboard: space pause, 1/2/4 speed, F fit, Esc clear focus.
+Panels: roster, feed, trends, **military** (fleet power, mix, tech score, matchups, active engagements), overlays. Speed 1/2/4/10. Keyboard: space pause, 1/2/4/0|5→10×, F fit, Esc clear focus.
 
 ## 8. Empire naming
 
-Procedural word-bank: species syllables + adjectives + government nouns (Imperium, Hegemony, Concord, Dominion, Collective, Republic). System names from the same seeded generator. No live API.
+Procedural word-bank. No live API.
 
 ## 9. Hosting
 
-Client-only for v1 — sim runs in the browser. Competitive WebSocket path is unused.
+Client-only for v1 — sim runs in the browser.

@@ -2,7 +2,9 @@ import { pickArchetype, traitsForArchetype } from "./archetypes.js";
 import { generateGalaxy } from "./galaxy.js";
 import { generateEmpireName } from "./names.js";
 import { createRng } from "./rng.js";
+import { emptyFleet } from "./ships.js";
 import { buildSnapshot } from "./snapshot.js";
+import { swatchForIndex, type EmpireSwatch } from "./swatches.js";
 import type {
   Empire,
   EmpireId,
@@ -55,11 +57,13 @@ export function createMacroMatch(opts: CreateMacroOptions = {}): {
       site: geo.site,
       hyperlanes: geo.hyperlanes,
       ownerId: null,
-      // Uncolonized space — grows only once an empire claims it.
       population: 6 + rng() * 10,
       credits: 2 + rng() * 5,
       garrison: 0,
       contested: null,
+      developments: new Set(),
+      defenseMix: emptyFleet(),
+      engagement: null,
     };
   }
 
@@ -71,15 +75,20 @@ export function createMacroMatch(opts: CreateMacroOptions = {}): {
   const usedNames = new Set<string>();
   const empires: Record<EmpireId, Empire> = {};
   const empireOrder: EmpireId[] = [];
+  const picked: EmpireSwatch[] = [];
 
   for (let i = 0; i < capitalIndices.length; i++) {
     const id = `e${i}`;
     const archetype = pickArchetype(seed, i);
     const capitalSystemId = geometry.ids[capitalIndices[i]!]!;
+    const swatch = swatchForIndex(i, capitalIndices.length, rng, picked);
+    picked.push(swatch);
     empires[id] = {
       id,
       name: generateEmpireName(seed, i, usedNames),
-      colorHue: hueForIndex(i, capitalIndices.length, rng),
+      colorHue: swatch.hue,
+      colorSat: swatch.sat,
+      colorLight: swatch.light,
       archetype,
       traits: traitsForArchetype(archetype, seed, i),
       capitalSystemId,
@@ -91,17 +100,22 @@ export function createMacroMatch(opts: CreateMacroOptions = {}): {
         productionTicksLeft: 0,
         garrisonMult: 1,
         garrisonTicksLeft: 0,
+        attackPressure: 1,
+        attackPressureTicksLeft: 0,
       },
+      researched: new Set(),
+      fleet: emptyFleet(),
     };
     empireOrder.push(id);
 
-    // Empires start from a single home system and colonize outward.
     const home = systems[capitalSystemId]!;
     home.ownerId = id;
     empires[id]!.ownedSystems.add(capitalSystemId);
     home.population = 70 + rng() * 40;
     home.credits = 55 + rng() * 45;
     home.garrison = 45 + rng() * 30;
+    // Starter flotilla
+    empires[id]!.fleet = { corvette: 6 + Math.floor(rng() * 4), raider: 1 };
   }
 
   const state: MacroState = {
@@ -128,22 +142,6 @@ export function createMacroMatch(opts: CreateMacroOptions = {}): {
   });
 
   return { state, config, snapshot: buildSnapshot(state) };
-}
-
-/**
- * Even spacing beats a golden-angle spiral here: with a known empire count the
- * widest possible gap between neighboring hues is what keeps the map readable.
- * The offset per index breaks up the "rainbow ring" look.
- */
-function hueForIndex(i: number, total: number, rng: () => number): number {
-  const step = 360 / Math.max(1, total);
-  // Interleave halves so index order does not walk the wheel in order.
-  const half = Math.ceil(total / 2);
-  const slot = i % 2 === 0 ? i / 2 : half + (i - 1) / 2;
-  const raw = (slot * step + rng() * step * 0.25) % 360;
-  // The yellow-green band muddies against the nebula.
-  if (raw > 64 && raw < 92) return raw + 30;
-  return raw;
 }
 
 /** Farthest-point sampling so homeworlds start far apart. */

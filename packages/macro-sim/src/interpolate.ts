@@ -2,8 +2,10 @@ import type {
   ContestedFront,
   EmpireId,
   MacroSnapshot,
+  PlanetaryDevId,
   SystemId,
 } from "./types.js";
+import { snapshotEngagement } from "./ships.js";
 
 export function easeInOutCubic(t: number): number {
   const x = Math.min(1, Math.max(0, t));
@@ -27,6 +29,9 @@ export interface InterpolatedSystem {
   credits: number;
   garrison: number;
   contested: ContestedFront | null;
+  developments: PlanetaryDevId[];
+  defenseMix: MacroSnapshot["systems"][string]["defenseMix"];
+  engagement: MacroSnapshot["systems"][string]["engagement"];
 }
 
 export interface InterpolatedSnapshot {
@@ -61,6 +66,9 @@ export function lerpSnapshot(
       credits: lerp(sa.credits, sb.credits, t),
       garrison: lerp(sa.garrison, sb.garrison, t),
       contested: lerpContested(sa.contested, sb.contested, t),
+      developments: sb.developments,
+      defenseMix: sb.defenseMix,
+      engagement: snapshotEngagement(sb.engagement),
     };
   }
 
@@ -74,6 +82,7 @@ export function lerpSnapshot(
       population: lerp(ea.population, eb.population, t),
       credits: lerp(ea.credits, eb.credits, t),
       garrison: lerp(ea.garrison, eb.garrison, t),
+      fleetPower: lerp(ea.fleetPower, eb.fleetPower, t),
     };
   }
 

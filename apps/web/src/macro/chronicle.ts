@@ -16,6 +16,7 @@ import {
   pushTrends,
 } from "./dashboard.js";
 import { MacroMapView } from "./mapView.js";
+import { eventPulseColor } from "./palette.js";
 
 export interface ChronicleLaunchOptions {
   mapSize?: MapSizeTier;
@@ -143,6 +144,11 @@ export function startChronicle(
         st.speed = Number(e.key) as 1 | 2 | 4;
         st.paused = false;
         break;
+      case "0":
+      case "5":
+        st.speed = 10;
+        st.paused = false;
+        break;
       case "f":
       case "F":
         map.fit();
@@ -178,13 +184,24 @@ export function startChronicle(
         pendingEvents = result.newEvents;
         pushTrends(trends, lerpSnapshot(prev, next, 1, (t) => t));
         for (const ev of result.newEvents) {
+          if (!ev.systemId) continue;
           if (
-            ev.systemId &&
-            (ev.kind === "front_collapse" ||
-              ev.kind === "capital_fallen" ||
-              ev.kind === "relic_discovery")
+            ev.kind === "front_collapse" ||
+            ev.kind === "capital_fallen" ||
+            ev.kind === "relic_discovery" ||
+            ev.kind === "fleet_battle" ||
+            ev.kind === "border_clash" ||
+            ev.kind === "offensive_blitz" ||
+            ev.kind === "defensive_stronghold" ||
+            ev.kind === "plague" ||
+            ev.kind === "rebellion" ||
+            ev.kind === "pirate_raid" ||
+            ev.kind === "robbery" ||
+            ev.kind === "tech_breakthrough" ||
+            ev.kind === "coup" ||
+            ev.kind === "planetary_built"
           ) {
-            map.pulseSystem(ev.systemId);
+            map.pulseSystem(ev.systemId, eventPulseColor(ev.kind));
           }
         }
         logicStartedAt = now;

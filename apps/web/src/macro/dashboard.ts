@@ -1,11 +1,23 @@
 import {
   archetypeLabel,
+  effectiveCombatPower,
+  formatComposition,
+  militaryTechScore,
+  PLANETARY_LABEL,
   type EmpireId,
   type InterpolatedSnapshot,
   type MacroEvent,
   type SystemId,
 } from "@starfall/macro-sim";
 import { empireSwatchCss } from "./palette.js";
+
+function empireCss(e: { colorHue: number; colorSat: number; colorLight: number }): string {
+  return empireSwatchCss({
+    hue: e.colorHue,
+    sat: e.colorSat,
+    light: e.colorLight,
+  });
+}
 
 export type OverlayId =
   | "contested"
@@ -32,9 +44,10 @@ export interface DashboardState {
     feed: boolean;
     trends: boolean;
     overlays: boolean;
+    military: boolean;
   };
   paused: boolean;
-  speed: 1 | 2 | 4;
+  speed: 1 | 2 | 4 | 10;
 }
 
 export interface TrendHistory {
@@ -42,6 +55,7 @@ export interface TrendHistory {
   territory: Map<EmpireId, number[]>;
   population: Map<EmpireId, number[]>;
   credits: Map<EmpireId, number[]>;
+  fleetPower: Map<EmpireId, number[]>;
 }
 
 const TREND_LEN = 64;
@@ -58,13 +72,19 @@ export function createDashboardState(): DashboardState {
     rosterAsc: false,
     overlays: {
       contested: true,
-      diplomacy: false,
+      diplomacy: true,
       frontiers: false,
       lanes: true,
       labels: true,
     },
     // Map-first: only roster + feed open by default
-    panels: { roster: true, feed: true, trends: false, overlays: false },
+    panels: {
+      roster: true,
+      feed: true,
+      trends: false,
+      overlays: false,
+      military: false,
+    },
     paused: false,
     speed: 1,
   };
@@ -75,6 +95,7 @@ export function createTrendHistory(): TrendHistory {
     territory: new Map(),
     population: new Map(),
     credits: new Map(),
+    fleetPower: new Map(),
   };
 }
 
@@ -87,6 +108,7 @@ export function pushTrends(
     push(history.territory, id, e.territory);
     push(history.population, id, e.population);
     push(history.credits, id, e.credits);
+    push(history.fleetPower, id, e.fleetPower);
   }
 }
 
@@ -120,6 +142,8 @@ export class MacroDashboard {
   private lastFeedSeq = 0;
   private lastRosterAt = 0;
   private dirty = true;
+  private elimUntil = 0;
+  private elimRaf = 0;
 
   constructor(
     parent: HTMLElement,
@@ -141,6 +165,7 @@ export class MacroDashboard {
   }
 
   dispose(): void {
+    if (this.elimRaf) cancelAnimationFrame(this.elimRaf);
     this.root.remove();
     this.rows.clear();
   }
@@ -172,10 +197,12 @@ export class MacroDashboard {
       this.dirty = false;
       this.renderRoster(view);
       this.renderTrends(view);
+      this.renderMilitary(view);
       this.renderFocusLabel(view);
       this.renderSelection(view);
     }
     this.renderFeed(view, newEvents);
+    this.handleEliminationAlerts(view, newEvents);
 
     const tickEl = this.root.querySelector("#ch-tick");
     if (tickEl) tickEl.textContent = `Tick ${view.tick}`;
@@ -226,7 +253,7 @@ export class MacroDashboard {
       .querySelectorAll<HTMLButtonElement>("[data-speed]")
       .forEach((btn) => {
         btn.addEventListener("click", () => {
-          this.state.speed = Number(btn.dataset.speed) as 1 | 2 | 4;
+          this.state.speed = Number(btn.dataset.speed) as 1 | 2 | 4 | 10;
           this.state.paused = false;
           this.changed();
         });
@@ -367,7 +394,7 @@ export class MacroDashboard {
     for (const id of pinned) {
       const empire = view.empires[id]!;
       const row = this.ensureRow(id);
-      row.swatch.style.background = empireSwatchCss(empire.colorHue);
+      row.swatch.style.background = empireCss(empire);
       setText(row.name, empire.name);
       setText(row.archetype, archetypeLabel(empire.archetype));
       setText(row.cells[0]!, String(Math.round(empire.territory)));
@@ -422,12 +449,13 @@ export class MacroDashboard {
     const focus = this.state.focusEmpireId;
     if (focus && view.empires[focus]) {
       const empire = view.empires[focus]!;
-      const color = empireSwatchCss(empire.colorHue);
+      const color = empireCss(empire);
       host.innerHTML = `
         <div class="ch-trend-title" style="color:${color}">${escapeHtml(empire.name)}</div>
         ${sparkRow("Systems", this.trends.territory.get(focus) ?? [], color, (v) => String(Math.round(v)))}
         ${sparkRow("Population", this.trends.population.get(focus) ?? [], color, fmt)}
         ${sparkRow("Credits", this.trends.credits.get(focus) ?? [], color, fmt)}
+        ${sparkRow("Fleet power", this.trends.fleetPower.get(focus) ?? [], color, fmt)}
       `;
       return;
     }
@@ -438,14 +466,14 @@ export class MacroDashboard {
       .sort((a, b) => view.empires[b]!.territory - view.empires[a]!.territory)
       .slice(0, 6);
     const series = leaders.map((id) => ({
-      color: empireSwatchCss(view.empires[id]!.colorHue),
+      color: empireCss(view.empires[id]!),
       values: this.trends.territory.get(id) ?? [],
     }));
     const legend = leaders
       .map(
         (id) =>
-          `<span class="ch-legend-item"><i style="background:${empireSwatchCss(
-            view.empires[id]!.colorHue,
+          `<span class="ch-legend-item"><i style="background:${empireCss(
+            view.empires[id]!,
           )}"></i>${escapeHtml(view.empires[id]!.name)} <b>${Math.round(
             view.empires[id]!.territory,
           )}</b></span>`,
@@ -484,13 +512,22 @@ export class MacroDashboard {
     card.hidden = false;
     const owner = system.ownerId ? view.empires[system.ownerId] : null;
     const ownerLine = owner
-      ? `<span class="ch-swatch" style="background:${empireSwatchCss(owner.colorHue)}"></span>${escapeHtml(owner.name)}`
+      ? `<span class="ch-swatch" style="background:${empireCss(owner)}"></span>${escapeHtml(owner.name)}`
       : "Uncolonized";
     const front = system.contested
       ? `<div class="ch-sel-front">Contested ${Math.round(system.contested.pct * 100)}% vs ${escapeHtml(
           view.empires[system.contested.vs]?.name ?? "—",
         )}</div>`
       : "";
+    const eng = system.engagement
+      ? `<div class="ch-sel-eng">${escapeHtml(system.engagement.mode)} · ${system.engagement.ticksRemaining}t left · intensity ${Math.round(system.engagement.intensity * 100)}%<br/><span class="ch-muted">${escapeHtml(formatComposition(system.engagement.committedA))} vs ${escapeHtml(formatComposition(system.engagement.committedB))}</span></div>`
+      : "";
+    const devs =
+      system.developments.length > 0
+        ? `<div class="ch-sel-devs">${system.developments
+            .map((d) => escapeHtml(PLANETARY_LABEL[d] ?? d))
+            .join(" · ")}</div>`
+        : "";
     card.innerHTML = `
       <div class="ch-sel-head">
         <strong>${escapeHtml(geo.name)}</strong>
@@ -503,11 +540,124 @@ export class MacroDashboard {
         <span>Gar <b>${fmt(system.garrison)}</b></span>
         <span>Lanes <b>${geo.hyperlanes.length}</b></span>
       </div>
+      <div class="ch-sel-stats"><span>Defense <b>${escapeHtml(formatComposition(system.defenseMix))}</b></span></div>
+      ${devs}
       ${front}
+      ${eng}
     `;
     card
       .querySelector("#ch-clear-selection")
       ?.addEventListener("click", () => this.setSelectedSystem(null));
+  }
+
+  private renderMilitary(view: InterpolatedSnapshot): void {
+    const host = this.root.querySelector("#ch-military");
+    if (!host) return;
+    const alive = [...view.empireOrder]
+      .filter((id) => view.empires[id]!.alive)
+      .sort(
+        (a, b) => view.empires[b]!.fleetPower - view.empires[a]!.fleetPower,
+      );
+    const focus = this.state.focusEmpireId;
+    const rows = alive
+      .slice(0, 16)
+      .map((id) => {
+        const e = view.empires[id]!;
+        const tech = militaryTechScore(e.researched);
+        return `<tr class="${focus === id ? "is-focus" : ""}" data-mil-empire="${id}">
+          <td><span class="ch-swatch" style="background:${empireCss(e)}"></span>${escapeHtml(e.name)}</td>
+          <td>${fmt(e.fleetPower)}</td>
+          <td class="ch-mono">${escapeHtml(formatComposition(e.fleet))}</td>
+          <td>${tech}</td>
+          <td>${escapeHtml(archetypeLabel(e.archetype))}</td>
+        </tr>`;
+      })
+      .join("");
+
+    let matchup = "";
+    if (focus && view.empires[focus]) {
+      const a = view.empires[focus]!;
+      const rivals = alive.filter((id) => id !== focus).slice(0, 5);
+      matchup = `<div class="ch-mil-matchups"><h3>Matchups vs ${escapeHtml(a.name)}</h3>${rivals
+        .map((id) => {
+          const b = view.empires[id]!;
+          const ab = effectiveCombatPower(a.fleet, b.fleet);
+          const ba = effectiveCombatPower(b.fleet, a.fleet);
+          const outlook =
+            ab > ba * 1.15 ? "favored" : ba > ab * 1.15 ? "underdog" : "toss-up";
+          return `<div class="ch-mil-row"><span style="color:${empireCss(b)}">${escapeHtml(b.name)}</span> P${Math.round(ab)} vs P${Math.round(ba)} · ${outlook}</div>`;
+        })
+        .join("")}</div>`;
+    }
+
+    const engagements: string[] = [];
+    for (const sid of view.systemOrder) {
+      const eng = view.systems[sid]!.engagement;
+      if (!eng) continue;
+      const name = view.geometry.byId[sid]?.name ?? sid;
+      engagements.push(
+        `<div class="ch-mil-eng" style="opacity:${0.45 + eng.intensity * 0.55}"><b>${escapeHtml(eng.mode)}</b> ${escapeHtml(name)} · ${eng.ticksRemaining}t · ${escapeHtml(view.empires[eng.attackerId]?.name ?? "?")} vs ${escapeHtml(view.empires[eng.defenderId]?.name ?? "?")}</div>`,
+      );
+    }
+    engagements.sort((a, b) => b.length - a.length);
+
+    host.innerHTML = `
+      <table class="ch-mil-table">
+        <thead><tr><th>Empire</th><th>Power</th><th>Fleet</th><th>Tech</th><th>Doctrine</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      ${matchup}
+      <div class="ch-mil-active"><h3>Active engagements</h3>${engagements.slice(0, 8).join("") || "<p class='ch-hint'>No major battles right now.</p>"}</div>
+    `;
+    host.querySelectorAll<HTMLElement>("[data-mil-empire]").forEach((row) => {
+      row.addEventListener("click", () => {
+        const id = row.dataset.milEmpire as EmpireId;
+        this.setFocus(this.state.focusEmpireId === id ? null : id);
+      });
+    });
+  }
+
+  private handleEliminationAlerts(
+    view: InterpolatedSnapshot,
+    newEvents: MacroEvent[],
+  ): void {
+    for (const ev of newEvents) {
+      if (ev.kind !== "empire_eliminated") continue;
+      const eid = ev.empireIds[0];
+      const empire = eid ? view.empires[eid] : null;
+      this.showEliminationAlert(
+        empire?.name ?? "An empire",
+        empire ? empireCss(empire) : "var(--sf-danger)",
+      );
+    }
+  }
+
+  private showEliminationAlert(name: string, color: string): void {
+    const el = this.root.querySelector<HTMLElement>("#ch-elim-alert");
+    if (!el) return;
+    const bar = el.querySelector<HTMLElement>(".ch-elim-progress");
+    const text = el.querySelector<HTMLElement>(".ch-elim-text");
+    if (text) {
+      text.innerHTML = `<span class="ch-swatch" style="background:${color}"></span> <strong>${escapeHtml(name)}</strong> has been eliminated`;
+    }
+    el.hidden = false;
+    el.classList.add("is-flashing");
+    el.style.setProperty("--elim-accent", color);
+    this.elimUntil = performance.now() + 5000;
+    if (this.elimRaf) cancelAnimationFrame(this.elimRaf);
+    const tick = (now: number): void => {
+      const left = this.elimUntil - now;
+      if (left <= 0) {
+        el.hidden = true;
+        el.classList.remove("is-flashing");
+        if (bar) bar.style.transform = "scaleX(0)";
+        this.elimRaf = 0;
+        return;
+      }
+      if (bar) bar.style.transform = `scaleX(${left / 5000})`;
+      this.elimRaf = requestAnimationFrame(tick);
+    };
+    this.elimRaf = requestAnimationFrame(tick);
   }
 }
 
@@ -599,16 +749,22 @@ function shellHtml(): string {
         <button type="button" class="btn" data-speed="1">1×</button>
         <button type="button" class="btn" data-speed="2">2×</button>
         <button type="button" class="btn" data-speed="4">4×</button>
+        <button type="button" class="btn" data-speed="10">10×</button>
         <button type="button" class="btn" id="ch-fit" title="Fit galaxy (F)">Fit</button>
         <button type="button" class="btn" id="ch-restart" title="New galaxy">New</button>
         <button type="button" class="btn" id="ch-exit">Exit</button>
       </div>
     </div>
     <div class="chronicle-stage">
+    <div id="ch-elim-alert" class="ch-elim-alert" hidden role="alert" aria-live="assertive">
+      <div class="ch-elim-text"></div>
+      <div class="ch-elim-bar"><div class="ch-elim-progress"></div></div>
+    </div>
     <nav class="chronicle-rail" aria-label="Chronicle panels">
       <button type="button" class="rail-tab is-active" data-panel-toggle="roster">Roster</button>
       <button type="button" class="rail-tab is-active" data-panel-toggle="feed">Feed</button>
       <button type="button" class="rail-tab" data-panel-toggle="trends">Trends</button>
+      <button type="button" class="rail-tab" data-panel-toggle="military">Military</button>
       <button type="button" class="rail-tab" data-panel-toggle="overlays">Overlays</button>
     </nav>
     <div class="chronicle-left">
@@ -650,6 +806,10 @@ function shellHtml(): string {
     <aside class="chronicle-panel" data-panel="trends" hidden>
       <h2>Trends</h2>
       <div id="ch-trends"></div>
+    </aside>
+    <aside class="chronicle-panel" data-panel="military" hidden>
+      <h2>Military</h2>
+      <div id="ch-military"></div>
     </aside>
     <aside class="chronicle-panel" data-panel="overlays" hidden>
       <h2>Overlays</h2>

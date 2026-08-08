@@ -10,6 +10,7 @@ import {
   Mesh,
   MeshBasicMaterial,
   NoBlending,
+  NormalBlending,
   OrthographicCamera,
   PlaneGeometry,
   Points,
@@ -31,9 +32,9 @@ import {
   type SystemId,
 } from "@starfall/macro-sim";
 import {
-  CARGO,
   COMBAT_FLASH,
   DANGER,
+  FOCUS,
   LANE,
   VOID,
   empireAccent,
@@ -105,7 +106,6 @@ function hexToRgb(hex: number): Rgb {
 
 /** Uncolonized stars stay dim so claimed space is what draws the eye. */
 const UNCOLONIZED_STAR = hexToRgb(0x5d687c);
-const FLASH = hexToRgb(COMBAT_FLASH);
 
 export class MacroMapView {
   readonly canvas: HTMLCanvasElement;
@@ -130,7 +130,10 @@ export class MacroMapView {
   private geometry: GalaxyGeometry | null = null;
   private draws: SystemDraw[] = [];
   private empireHues = new Map<EmpireId, number>();
+  private empireSats = new Map<EmpireId, number>();
+  private empireLights = new Map<EmpireId, number>();
   private empireNames = new Map<EmpireId, string>();
+  private pulseColors = new Map<SystemId, number>();
 
   private ownerTarget: WebGLRenderTarget | null = null;
   private fieldTarget: WebGLRenderTarget | null = null;
@@ -204,10 +207,14 @@ export class MacroMapView {
   setGalaxy(snapshot: MacroSnapshot): void {
     this.geometry = snapshot.geometry;
     this.empireHues.clear();
+    this.empireSats.clear();
+    this.empireLights.clear();
     this.empireNames.clear();
     for (const id of snapshot.empireOrder) {
       const e = snapshot.empires[id]!;
       this.empireHues.set(id, e.colorHue);
+      this.empireSats.set(id, e.colorSat);
+      this.empireLights.set(id, e.colorLight);
       this.empireNames.set(id, e.name);
     }
 
@@ -236,8 +243,18 @@ export class MacroMapView {
     this.updateCamera();
   }
 
-  pulseSystem(systemId: SystemId): void {
+  pulseSystem(systemId: SystemId, colorHex: number = COMBAT_FLASH): void {
     this.pulses.set(systemId, 1);
+    this.pulseColors.set(systemId, colorHex);
+  }
+
+  private empireColor(id: EmpireId | undefined): { hue: number; sat: number; light: number } {
+    if (!id) return { hue: 0, sat: 0.5, light: 0.5 };
+    return {
+      hue: this.empireHues.get(id) ?? 0,
+      sat: this.empireSats.get(id) ?? 0.58,
+      light: this.empireLights.get(id) ?? 0.52,
+    };
   }
 
   dispose(): void {
@@ -291,6 +308,7 @@ export class MacroMapView {
     this.capitalColorAttr = null;
     this.capitalSizeAttr = null;
     this.pulses.clear();
+    this.pulseColors.clear();
   }
 
   /** Triangle fans over every cell; the fill color is rewritten each frame. */
@@ -581,10 +599,10 @@ export class MacroMapView {
     this.pactLines = new LineSegments(
       buffer,
       new LineBasicMaterial({
-        color: CARGO,
+        color: FOCUS,
         transparent: true,
-        opacity: 0.34,
-        blending: AdditiveBlending,
+        opacity: 0.78,
+        blending: NormalBlending,
         depthTest: false,
         depthWrite: false,
       }),
@@ -696,7 +714,7 @@ export class MacroMapView {
       let tint: Rgb;
       let cellAlpha: number;
       if (owned) {
-        tint = empireAccent(this.empireHues.get(ownerId) ?? 0);
+        tint = empireAccent(this.empireColor(ownerId));
         cellAlpha = 1;
         const c = centroids.get(ownerId) ?? { x: 0, y: 0, n: 0 };
         c.x += draw.x;
@@ -721,10 +739,12 @@ export class MacroMapView {
 
       const pulse = this.pulses.get(draw.id) ?? 0;
       if (pulse > 0) {
+        const flashHex = this.pulseColors.get(draw.id) ?? COMBAT_FLASH;
+        const flash = hexToRgb(flashHex);
         const k = pulse * 0.55;
-        r += (FLASH.r - r) * k;
-        g += (FLASH.g - g) * k;
-        b += (FLASH.b - b) * k;
+        r += (flash.r - r) * k;
+        g += (flash.g - g) * k;
+        b += (flash.b - b) * k;
       }
 
       for (let v = 0; v < draw.count; v++) {
@@ -822,7 +842,11 @@ export class MacroMapView {
         pos[i * 3 + 1] = geo.site.y;
         pos[i * 3 + 2] = 2;
       }
-      const accent = empireAccent(empire.colorHue);
+      const accent = empireAccent({
+        hue: empire.colorHue,
+        sat: empire.colorSat,
+        light: empire.colorLight,
+      });
       const live = empire.alive ? 1 : 0.2;
       col[i * 3] = accent.r * live;
       col[i * 3 + 1] = accent.g * live;
@@ -855,7 +879,7 @@ export class MacroMapView {
       let g = neutral.g * 0.5;
       let bl = neutral.b * 0.55;
       if (shared) {
-        const accent = empireAccent(this.empireHues.get(shared) ?? 0);
+        const accent = empireAccent(this.empireColor(shared));
         const dim = opts.focusEmpireId && shared !== opts.focusEmpireId ? 0.3 : 1;
         r = accent.r * 0.34 * dim;
         g = accent.g * 0.34 * dim;
@@ -913,8 +937,10 @@ export class MacroMapView {
         const dx = edge.p1.x - edge.p0.x;
         const dy = edge.p1.y - edge.p0.y;
         const len = Math.hypot(dx, dy) || 1;
-        const nx = (-dy / len) * baseWidth * (0.6 + front.pct * 1.9);
-        const ny = (dx / len) * baseWidth * (0.6 + front.pct * 1.9);
+        const intensity = sys.engagement?.intensity ?? front.pct;
+        const widthScale = 0.6 + front.pct * 1.9 + intensity * 2.4;
+        const nx = (-dy / len) * baseWidth * widthScale;
+        const ny = (dx / len) * baseWidth * widthScale;
 
         positions.push(
           edge.p0.x + nx, edge.p0.y + ny, 0.6,
@@ -924,7 +950,7 @@ export class MacroMapView {
           edge.p1.x - nx, edge.p1.y - ny, 0.6,
           edge.p0.x - nx, edge.p0.y - ny, 0.6,
         );
-        const heat = (0.35 + front.pct * 0.9) * pulse;
+        const heat = (0.35 + front.pct * 0.9 + intensity * 0.55) * pulse;
         for (let v = 0; v < 6; v++) {
           colors.push(danger.r * heat, danger.g * heat * 0.8, danger.b * heat * 0.7);
         }
@@ -981,7 +1007,7 @@ export class MacroMapView {
           const u = 1 - t;
           const qx = u * u * from.x + 2 * u * t * cx + t * t * to.x;
           const qy = u * u * from.y + 2 * u * t * cy + t * t * to.y;
-          positions.push(px, py, 0.9, qx, qy, 0.9);
+          positions.push(px, py, 1.2, qx, qy, 1.2);
           px = qx;
           py = qy;
         }
@@ -1019,6 +1045,8 @@ export class MacroMapView {
         id,
         name: empire.name,
         colorHue: empire.colorHue,
+        colorSat: empire.colorSat,
+        colorLight: empire.colorLight,
         x: c.x / c.n,
         y: c.y / c.n,
         territory: c.n,
@@ -1034,6 +1062,8 @@ export class MacroMapView {
           id: opts.focusEmpireId,
           name: empire.name,
           colorHue: empire.colorHue,
+        colorSat: empire.colorSat,
+        colorLight: empire.colorLight,
           x: c.x / c.n,
           y: c.y / c.n,
           territory: c.n,
@@ -1080,8 +1110,10 @@ export class MacroMapView {
   private decayPulses(): void {
     for (const [id, v] of this.pulses) {
       const next = v - 0.03;
-      if (next <= 0) this.pulses.delete(id);
-      else this.pulses.set(id, next);
+      if (next <= 0) {
+        this.pulses.delete(id);
+        this.pulseColors.delete(id);
+      } else this.pulses.set(id, next);
     }
   }
 

@@ -2,10 +2,17 @@ export type SystemId = string;
 export type EmpireId = string;
 
 export type ArchetypeId =
+  | "conqueror"
   | "aggressive"
+  | "reckless"
   | "cautious"
+  | "strategist"
   | "opportunistic"
+  | "diplomat"
   | "loyal"
+  | "xenophobe"
+  | "technocrat"
+  | "isolationist"
   | "wildcard";
 
 export interface EmpireTraits {
@@ -13,6 +20,36 @@ export interface EmpireTraits {
   loyalty: number;
   risk: number;
   greed: number;
+  ambition: number;
+  xenophobia: number;
+  curiosity: number;
+}
+
+export type MacroShipType =
+  | "corvette"
+  | "destroyer"
+  | "cruiser"
+  | "battleship"
+  | "carrier"
+  | "raider"
+  | "dreadnought"
+  | "defense_platform";
+
+export type MacroFleetComposition = Partial<Record<MacroShipType, number>>;
+
+export type EngagementMode = "skirmish" | "fleet_battle" | "siege" | "raid";
+
+export interface ActiveEngagement {
+  mode: EngagementMode;
+  attackerId: EmpireId;
+  defenderId: EmpireId;
+  committedA: MacroFleetComposition;
+  committedB: MacroFleetComposition;
+  ticksElapsed: number;
+  ticksRemaining: number;
+  /** 0–1 log-scaled from committed power + local resources. */
+  intensity: number;
+  tacticsSeed: number;
 }
 
 export interface ContestedFront {
@@ -75,6 +112,39 @@ export interface GalaxyGeometry {
   radius: number;
 }
 
+export type MacroTechId =
+  | "industrial_foundries"
+  | "colony_administration"
+  | "militia_doctrine"
+  | "archive_networks"
+  | "megafarms"
+  | "fortress_worlds"
+  | "diplomatic_corps"
+  | "deep_scanners"
+  | "escort_doctrine"
+  | "war_mobilization"
+  | "planetary_shields"
+  | "capital_shipyards"
+  | "xenology_bureau"
+  | "singularity_labs"
+  | "tactical_ai"
+  | "galactic_hegemony"
+  | "eternal_archives"
+  | "iron_curtain"
+  | "pax_federation"
+  | "supercapital_frame";
+
+export type PlanetaryDevId =
+  | "agro_domes"
+  | "mining_spires"
+  | "orbital_batteries"
+  | "shipyard_ring"
+  | "research_campus"
+  | "fortress_complex"
+  | "trade_hub"
+  | "plague_hospitals"
+  | "hidden_arsenals";
+
 export interface StarSystem {
   id: SystemId;
   name: string;
@@ -88,12 +158,17 @@ export interface StarSystem {
   credits: number;
   garrison: number;
   contested: ContestedFront | null;
+  developments: Set<PlanetaryDevId>;
+  defenseMix: MacroFleetComposition;
+  engagement: ActiveEngagement | null;
 }
 
 export interface Empire {
   id: EmpireId;
   name: string;
   colorHue: number;
+  colorSat: number;
+  colorLight: number;
   archetype: ArchetypeId;
   traits: EmpireTraits;
   capitalSystemId: SystemId;
@@ -103,6 +178,8 @@ export interface Empire {
   ownedSystems: Set<SystemId>;
   /** Temporary modifiers from events (decay each logic tick). */
   modifiers: EmpireModifiers;
+  researched: Set<MacroTechId>;
+  fleet: MacroFleetComposition;
 }
 
 export interface EmpireModifiers {
@@ -110,6 +187,8 @@ export interface EmpireModifiers {
   productionTicksLeft: number;
   garrisonMult: number;
   garrisonTicksLeft: number;
+  attackPressure: number;
+  attackPressureTicksLeft: number;
 }
 
 export type MacroEventKind =
@@ -118,11 +197,23 @@ export type MacroEventKind =
   | "relic_discovery"
   | "pirate_raid"
   | "disaster"
+  | "offensive_blitz"
+  | "defensive_stronghold"
+  | "plague"
+  | "robbery"
+  | "tech_breakthrough"
+  | "coup"
+  | "regime_change"
   | "alliance_formed"
   | "alliance_broken"
   | "front_collapse"
   | "capital_fallen"
-  | "empire_eliminated";
+  | "empire_eliminated"
+  | "match_won"
+  | "fleet_battle"
+  | "border_clash"
+  | "tech_researched"
+  | "planetary_built";
 
 export interface MacroEvent {
   /** Monotonic id so the client can append only what it has not shown yet. */
@@ -156,11 +247,16 @@ export interface SnapshotSystem {
   credits: number;
   garrison: number;
   contested: ContestedFront | null;
+  developments: PlanetaryDevId[];
+  defenseMix: MacroFleetComposition;
+  engagement: ActiveEngagement | null;
 }
 
 export interface SnapshotEmpire {
   name: string;
   colorHue: number;
+  colorSat: number;
+  colorLight: number;
   archetype: ArchetypeId;
   capitalSystemId: SystemId;
   allies: EmpireId[];
@@ -169,6 +265,9 @@ export interface SnapshotEmpire {
   population: number;
   credits: number;
   garrison: number;
+  researched: MacroTechId[];
+  fleet: MacroFleetComposition;
+  fleetPower: number;
 }
 
 /** Immutable client-facing snapshot after a logic tick. */
@@ -222,14 +321,16 @@ export function empireCountForSystems(systemCount: number): number {
 
 export const DEFAULT_MACRO_CONFIG: MacroConfig = {
   logicIntervalMs: 100,
-  productionVariance: 0.1,
+  productionVariance: 0.14,
   systemCount: SYSTEM_COUNTS.medium,
   empireCount: empireCountForSystems(SYSTEM_COUNTS.medium),
-  eventChancePerTick: 0.012,
-  contestedFlipThreshold: 0.92,
-  contestedDriftScale: 0.003,
+  eventChancePerTick: 0.02,
+  contestedFlipThreshold: 0.72,
+  contestedDriftScale: 0.01,
   economyPulseTicks: 10,
   botCadenceTicks: 5,
   diplomacyCadenceTicks: 60,
-  maxClaimsPerPulse: 3,
+  maxClaimsPerPulse: 2,
 };
+
+export const MAX_PLANETARY_DEVS = 4;

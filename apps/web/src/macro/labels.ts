@@ -17,6 +17,8 @@ export interface EmpireLabel {
   id: EmpireId;
   name: string;
   colorHue: number;
+  colorSat: number;
+  colorLight: number;
   /** Territory centroid in world space. */
   x: number;
   y: number;
@@ -126,7 +128,13 @@ export class LabelLayer {
       node.style.display = "";
       node.style.transform = `translate(-50%, -50%) translate(${p.x.toFixed(1)}px, ${p.y.toFixed(1)}px)`;
       node.style.fontSize = `${fontPx.toFixed(1)}px`;
-      node.style.color = rgbToCss(empireAccent(label.colorHue));
+      node.style.color = rgbToCss(
+        empireAccent({
+          hue: label.colorHue,
+          sat: label.colorSat,
+          light: label.colorLight,
+        }),
+      );
       node.style.opacity = String(label.focused ? 1 : opacity);
       node.classList.toggle("is-focus", label.focused);
     }

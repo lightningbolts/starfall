@@ -10,7 +10,6 @@ export function tryDiplomacy(
   const events: MacroEvent[] = [];
   const tick = state.tick;
 
-  // Break alliances when opportunistic / low loyalty and ally looks overextended
   for (const allyId of [...empire.allies]) {
     const ally = state.empires[allyId];
     if (!ally?.alive) {
@@ -18,10 +17,14 @@ export function tryDiplomacy(
       continue;
     }
     const overextended = frontierPressure(state, allyId) > 2.2;
+    const softCapPenalty = empire.allies.length * 0.015;
     const breakChance =
-      (1 - empire.traits.loyalty) * 0.09 +
-      (empire.archetype === "opportunistic" && overextended ? 0.22 : 0) +
-      empire.traits.greed * 0.03;
+      (1 - empire.traits.loyalty) * 0.1 +
+      empire.traits.greed * 0.04 +
+      empire.traits.xenophobia * 0.06 +
+      softCapPenalty +
+      (empire.archetype === "opportunistic" && overextended ? 0.25 : 0) +
+      (empire.archetype === "strategist" && overextended ? 0.12 : 0);
     if (rng() < breakChance) {
       breakAlliance(state, empire.id, allyId);
       events.push(
@@ -36,21 +39,42 @@ export function tryDiplomacy(
     }
   }
 
-  // Propose alliance
-  if (empire.allies.length >= 3) return events;
+  // No hard ally cap — xenophobes / isolationists simply rarely propose.
   const proposeChance =
-    empire.traits.loyalty * 0.08 +
-    (empire.archetype === "opportunistic" ? 0.12 : 0.04) +
-    (empire.archetype === "loyal" ? 0.1 : 0);
-  if (rng() > proposeChance) return events;
+    empire.traits.loyalty * 0.1 +
+    (1 - empire.traits.xenophobia) * 0.08 +
+    (empire.archetype === "diplomat" ? 0.22 : 0) +
+    (empire.archetype === "loyal" ? 0.12 : 0) +
+    (empire.archetype === "opportunistic" ? 0.1 : 0) -
+    (empire.archetype === "xenophobe" ? 0.15 : 0) -
+    (empire.archetype === "isolationist" ? 0.18 : 0) -
+    (empire.archetype === "conqueror" ? 0.06 : 0);
+
+  if (empire.researched.has("diplomatic_corps")) {
+    // handled below via accept/propose bump
+  }
+
+  let propose = proposeChance;
+  if (empire.researched.has("diplomatic_corps")) propose += 0.1;
+  if (rng() > Math.max(0.02, propose)) return events;
 
   const candidate = pickAllyCandidate(state, empire, rng);
   if (!candidate) return events;
   const other = state.empires[candidate]!;
-  const accept =
-    other.traits.loyalty * 0.5 +
-    (1 - other.traits.aggression) * 0.3 +
-    other.traits.greed * 0.1;
+
+  let accept =
+    other.traits.loyalty * 0.45 +
+    (1 - other.traits.aggression) * 0.25 +
+    (1 - other.traits.xenophobia) * 0.35 +
+    other.traits.greed * 0.08;
+  if (other.researched.has("diplomatic_corps")) accept += 0.12;
+  if (other.archetype === "xenophobe" || other.archetype === "isolationist") {
+    accept *= 0.25;
+  }
+  if (empire.researched.has("xenology_bureau") && other.traits.xenophobia > 0.5) {
+    accept += 0.15;
+  }
+
   if (rng() < accept) {
     formAlliance(empire, other);
     events.push(

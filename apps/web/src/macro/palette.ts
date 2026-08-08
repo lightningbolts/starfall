@@ -17,10 +17,25 @@ export const DANGER = 0xc45c4a;
 export const COMBAT_FLASH = 0xf5f2ea;
 export const HUD_BORDER = 0x2a3344;
 
+/** Event cue colors (map pulses + feed accents). */
+export const EVENT_PLAGUE = 0x6bcf8e;
+export const EVENT_REBELLION = 0xd4783a;
+export const EVENT_BLITZ = 0xe05252;
+export const EVENT_PIRATES = 0x9a8f7a;
+export const EVENT_TECH = 0x5eb0e0;
+export const EVENT_COUP = 0xc9a0dc;
+export const EVENT_BATTLE = 0xf0c040;
+
 export interface Rgb {
   r: number;
   g: number;
   b: number;
+}
+
+export interface EmpireColor {
+  hue: number;
+  sat: number;
+  light: number;
 }
 
 function normalizeHue(hue: number): number {
@@ -47,26 +62,98 @@ function hslToRgb(h: number, s: number, l: number): Rgb {
   };
 }
 
+function asColor(
+  hueOrColor: number | EmpireColor,
+  sat?: number,
+  light?: number,
+): EmpireColor {
+  if (typeof hueOrColor === "object") return hueOrColor;
+  return {
+    hue: hueOrColor,
+    sat: sat ?? 0.58,
+    light: light ?? 0.52,
+  };
+}
+
 /** Interior of an empire's territory — deep and desaturated so stars read on top. */
-export function empireFill(hue: number): Rgb {
-  return hslToRgb(normalizeHue(hue), 0.45, 0.17);
+export function empireFill(
+  hueOrColor: number | EmpireColor,
+  sat?: number,
+  light?: number,
+): Rgb {
+  const c = asColor(hueOrColor, sat, light);
+  return hslToRgb(
+    normalizeHue(c.hue),
+    Math.min(0.5, c.sat * 0.7),
+    Math.min(0.22, c.light * 0.35),
+  );
 }
 
 /** Territory rim, capital markers, and roster swatches. */
-export function empireAccent(hue: number): Rgb {
-  return hslToRgb(normalizeHue(hue), 0.58, 0.52);
+export function empireAccent(
+  hueOrColor: number | EmpireColor,
+  sat?: number,
+  light?: number,
+): Rgb {
+  const c = asColor(hueOrColor, sat, light);
+  return hslToRgb(normalizeHue(c.hue), c.sat, c.light);
 }
 
 export function rgbToCss(c: Rgb): string {
-  const to255 = (v: number): number => Math.round(Math.min(1, Math.max(0, v)) * 255);
+  const to255 = (v: number): number =>
+    Math.round(Math.min(1, Math.max(0, v)) * 255);
   return `rgb(${to255(c.r)} ${to255(c.g)} ${to255(c.b)})`;
 }
 
-/** CSS color for a dashboard swatch; identical hue/level to the map rim. */
-export function empireSwatchCss(hue: number): string {
-  return rgbToCss(empireAccent(hue));
+export function hexToRgb(hex: number): Rgb {
+  return {
+    r: ((hex >> 16) & 255) / 255,
+    g: ((hex >> 8) & 255) / 255,
+    b: (hex & 255) / 255,
+  };
 }
 
-export function empireFillCss(hue: number): string {
-  return rgbToCss(empireFill(hue));
+/** CSS color for a dashboard swatch; identical hue/level to the map rim. */
+export function empireSwatchCss(
+  hueOrColor: number | EmpireColor,
+  sat?: number,
+  light?: number,
+): string {
+  return rgbToCss(empireAccent(hueOrColor, sat, light));
+}
+
+export function empireFillCss(
+  hueOrColor: number | EmpireColor,
+  sat?: number,
+  light?: number,
+): string {
+  return rgbToCss(empireFill(hueOrColor, sat, light));
+}
+
+export function eventPulseColor(kind: string): number {
+  switch (kind) {
+    case "plague":
+      return EVENT_PLAGUE;
+    case "rebellion":
+      return EVENT_REBELLION;
+    case "offensive_blitz":
+      return EVENT_BLITZ;
+    case "pirate_raid":
+    case "robbery":
+      return EVENT_PIRATES;
+    case "tech_breakthrough":
+    case "tech_researched":
+    case "relic_discovery":
+      return EVENT_TECH;
+    case "coup":
+    case "regime_change":
+      return EVENT_COUP;
+    case "fleet_battle":
+    case "border_clash":
+    case "capital_fallen":
+    case "front_collapse":
+      return EVENT_BATTLE;
+    default:
+      return COMBAT_FLASH;
+  }
 }

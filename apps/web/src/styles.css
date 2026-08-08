@@ -25,6 +25,13 @@
   --sf-combat-flash: #f5f2ea;
   --sf-text: #e6eaf0;
   --sf-text-dim: #9aa3b2;
+  --sf-event-plague: #6bcf8e;
+  --sf-event-rebellion: #d4783a;
+  --sf-event-blitz: #e05252;
+  --sf-event-pirates: #9a8f7a;
+  --sf-event-tech: #5eb0e0;
+  --sf-event-coup: #c9a0dc;
+  --sf-event-battle: #f0c040;
 
   /* Chrome */
   --sf-hud-bg: color-mix(in srgb, var(--sf-void) 82%, transparent);
@@ -1404,6 +1411,7 @@ body.chronicle-active > #app {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
+  z-index: 5;
 }
 
 .chronicle-panel {
@@ -1450,15 +1458,23 @@ body.chronicle-active > #app {
 }
 
 .chronicle-panel[data-panel="trends"],
-.chronicle-panel[data-panel="overlays"] {
+.chronicle-panel[data-panel="overlays"],
+.chronicle-panel[data-panel="military"] {
   position: absolute;
-  right: 4.6rem;
+  right: calc(0.75rem + 6.25rem);
   width: min(300px, calc(100vw - 1.5rem));
   max-height: calc(100% - 1rem);
+  z-index: 3;
 }
 
 .chronicle-panel[data-panel="trends"] {
   top: 0.5rem;
+}
+
+.chronicle-panel[data-panel="military"] {
+  top: 0.5rem;
+  width: min(360px, calc(100vw - 1.5rem));
+  max-height: calc(100% - 1rem);
 }
 
 .chronicle-panel[data-panel="overlays"] {
@@ -1604,6 +1620,150 @@ body.chronicle-active > #app {
 .ch-feed-line {
   padding: 0.25rem 0;
   border-bottom: 1px solid color-mix(in srgb, var(--sf-hud-border) 70%, transparent);
+  border-left: 2px solid transparent;
+  padding-left: 0.35rem;
+}
+
+.ch-feed-line[data-kind="empire_eliminated"],
+.ch-feed-line[data-kind="capital_fallen"] {
+  border-left-color: var(--sf-danger);
+  color: color-mix(in srgb, var(--sf-danger) 35%, var(--sf-text));
+}
+
+.ch-feed-line[data-kind="fleet_battle"],
+.ch-feed-line[data-kind="border_clash"],
+.ch-feed-line[data-kind="offensive_blitz"] {
+  border-left-color: var(--sf-event-battle);
+}
+
+.ch-feed-line[data-kind="plague"] {
+  border-left-color: var(--sf-event-plague);
+}
+
+.ch-feed-line[data-kind="rebellion"],
+.ch-feed-line[data-kind="coup"] {
+  border-left-color: var(--sf-event-rebellion);
+}
+
+.ch-feed-line[data-kind="tech_breakthrough"],
+.ch-feed-line[data-kind="tech_researched"] {
+  border-left-color: var(--sf-event-tech);
+}
+
+.ch-feed-line[data-kind="pirate_raid"],
+.ch-feed-line[data-kind="robbery"] {
+  border-left-color: var(--sf-event-pirates);
+}
+
+.ch-elim-alert {
+  pointer-events: none;
+  position: absolute;
+  top: 0.65rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 8;
+  min-width: min(420px, 70vw);
+  padding: 0.65rem 1rem 0.45rem;
+  text-align: center;
+  background: color-mix(in srgb, var(--sf-void) 72%, var(--sf-danger) 18%);
+  border: 1px solid var(--elim-accent, var(--sf-danger));
+  border-radius: var(--sf-radius);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--elim-accent, var(--sf-danger)) 35%, transparent);
+}
+
+.ch-elim-alert.is-flashing {
+  animation: ch-elim-flash 0.55s ease-in-out infinite alternate;
+}
+
+@keyframes ch-elim-flash {
+  from {
+    opacity: 0.82;
+    filter: brightness(1);
+  }
+  to {
+    opacity: 1;
+    filter: brightness(1.15);
+  }
+}
+
+.ch-elim-text {
+  font-family: var(--sf-font-display);
+  font-size: 0.95rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+}
+
+.ch-elim-bar {
+  margin-top: 0.45rem;
+  height: 3px;
+  background: color-mix(in srgb, var(--sf-hud-border) 80%, transparent);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.ch-elim-progress {
+  height: 100%;
+  width: 100%;
+  transform-origin: left center;
+  transform: scaleX(1);
+  background: var(--elim-accent, var(--sf-danger));
+}
+
+.ch-mil-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+}
+
+.ch-mil-table th,
+.ch-mil-table td {
+  text-align: left;
+  padding: 0.28rem 0.2rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--sf-hud-border) 70%, transparent);
+}
+
+.ch-mil-table tr {
+  cursor: pointer;
+}
+
+.ch-mil-table tr.is-focus {
+  background: color-mix(in srgb, var(--sf-self) 14%, transparent);
+}
+
+.ch-mono {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.72rem;
+}
+
+.ch-mil-matchups,
+.ch-mil-active {
+  margin-top: 0.7rem;
+}
+
+.ch-mil-matchups h3,
+.ch-mil-active h3 {
+  margin: 0 0 0.35rem;
+  font-size: 0.8rem;
+}
+
+.ch-mil-row,
+.ch-mil-eng {
+  font-size: 0.78rem;
+  margin: 0.2rem 0;
+}
+
+.ch-sel-devs,
+.ch-sel-eng {
+  margin-top: 0.35rem;
+  font-size: 0.78rem;
+  color: var(--sf-text-dim);
+}
+
+.ch-muted {
+  color: var(--sf-text-dim);
+  font-size: 0.72rem;
 }
 
 .ch-feed-tick {
@@ -1793,13 +1953,15 @@ body.chronicle-active > #app {
 
 @media (max-width: 800px) {
   .chronicle-panel[data-panel="trends"],
-  .chronicle-panel[data-panel="overlays"] {
+  .chronicle-panel[data-panel="overlays"],
+  .chronicle-panel[data-panel="military"] {
     right: 0.75rem;
   }
 
   /* The rail lies flat across the top here, so panels start below it. */
   .chronicle-left,
-  .chronicle-panel[data-panel="trends"] {
+  .chronicle-panel[data-panel="trends"],
+  .chronicle-panel[data-panel="military"] {
     top: 3rem;
   }
 

@@ -1,3 +1,4 @@
+import { fleetPower, snapshotEngagement } from "./ships.js";
 import type { MacroSnapshot, MacroState } from "./types.js";
 
 /**
@@ -14,6 +15,9 @@ export function buildSnapshot(state: MacroState): MacroSnapshot {
       credits: s.credits,
       garrison: s.garrison,
       contested: s.contested ? { ...s.contested } : null,
+      developments: [...s.developments],
+      defenseMix: { ...s.defenseMix },
+      engagement: snapshotEngagement(s.engagement),
     };
   }
 
@@ -32,6 +36,8 @@ export function buildSnapshot(state: MacroState): MacroSnapshot {
     empires[id] = {
       name: e.name,
       colorHue: e.colorHue,
+      colorSat: e.colorSat,
+      colorLight: e.colorLight,
       archetype: e.archetype,
       capitalSystemId: e.capitalSystemId,
       allies: [...e.allies],
@@ -40,6 +46,9 @@ export function buildSnapshot(state: MacroState): MacroSnapshot {
       population,
       credits,
       garrison,
+      researched: [...e.researched],
+      fleet: { ...e.fleet },
+      fleetPower: fleetPower(e.fleet),
     };
   }
 
