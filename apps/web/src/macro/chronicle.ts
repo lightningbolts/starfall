@@ -112,13 +112,19 @@ export function startChronicle(
   const launchOptions: ChronicleLaunchOptions = { mapSize, seed: sim.seed };
   writeChronicleHash(launchOptions, true);
 
-  dash.root.querySelector("#ch-exit")?.addEventListener("click", () => {
+  dash.root.querySelector("#ch-exit")?.addEventListener("pointerdown", (e) => {
+    if ((e as PointerEvent).button !== 0) return;
+    e.preventDefault();
     exitChronicle();
   });
-  dash.root.querySelector("#ch-fit")?.addEventListener("click", () => {
+  dash.root.querySelector("#ch-fit")?.addEventListener("pointerdown", (e) => {
+    if ((e as PointerEvent).button !== 0) return;
+    e.preventDefault();
     map.fit();
   });
-  dash.root.querySelector("#ch-restart")?.addEventListener("click", () => {
+  dash.root.querySelector("#ch-restart")?.addEventListener("pointerdown", (e) => {
+    if ((e as PointerEvent).button !== 0) return;
+    e.preventDefault();
     startChronicle(host, { mapSize }, hooks);
   });
 

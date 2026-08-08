@@ -178,6 +178,14 @@ export class MacroDashboard {
   private dirty = true;
   private elimUntil = 0;
   private elimRaf = 0;
+  /** >0 while a pointer is down on the HUD — skip DOM rebuilds that cancel clicks. */
+  private pointerDepth = 0;
+  private lastMilitarySig = "";
+  private lastBattlesSig = "";
+  private lastEmpireSig = "";
+  private lastTrendsSig = "";
+  private lastSelectionSig = "";
+  private lastView: InterpolatedSnapshot | null = null;
 
   constructor(
     parent: HTMLElement,
@@ -200,6 +208,9 @@ export class MacroDashboard {
 
   dispose(): void {
     if (this.elimRaf) cancelAnimationFrame(this.elimRaf);
+    this.root.removeEventListener("pointerdown", this.onHudPointerDown, true);
+    window.removeEventListener("pointerup", this.onHudPointerUp, true);
+    window.removeEventListener("pointercancel", this.onHudPointerUp, true);
     this.root.remove();
     this.rows.clear();
   }
@@ -226,7 +237,13 @@ export class MacroDashboard {
 
   sync(view: InterpolatedSnapshot, newEvents: MacroEvent[]): void {
     const now = performance.now();
-    if (this.dirty || now - this.lastRosterAt >= ROSTER_INTERVAL_MS) {
+    this.lastView = view;
+    // Never rebuild interactive DOM mid-gesture — that drops clicks (sort, focus, speed).
+    const allowHeavy = this.pointerDepth === 0;
+    if (
+      allowHeavy &&
+      (this.dirty || now - this.lastRosterAt >= ROSTER_INTERVAL_MS)
+    ) {
       this.lastRosterAt = now;
       this.dirty = false;
       this.renderRoster(view);
@@ -236,6 +253,9 @@ export class MacroDashboard {
       this.renderEmpireDetail(view);
       this.renderFocusLabel(view);
       this.renderSelection(view);
+    } else if (!allowHeavy) {
+      // Keep tick chrome live; defer the heavy panels until pointer-up.
+      this.dirty = true;
     }
     this.renderFeed(view, newEvents);
     this.handleEliminationAlerts(view, newEvents);
@@ -260,10 +280,17 @@ export class MacroDashboard {
   }
 
   private bind(): void {
+    // Capture so we freeze HUD rebuilds for the whole press, even if target is replaced.
+    this.root.addEventListener("pointerdown", this.onHudPointerDown, true);
+    window.addEventListener("pointerup", this.onHudPointerUp, true);
+    window.addEventListener("pointercancel", this.onHudPointerUp, true);
+
     this.root
       .querySelectorAll<HTMLButtonElement>("[data-panel-toggle]")
       .forEach((btn) => {
-        btn.addEventListener("click", () => {
+        btn.addEventListener("pointerdown", (e) => {
+          if (e.button !== 0) return;
+          e.preventDefault();
           const key = btn.dataset.panelToggle as keyof DashboardState["panels"];
           const next = !this.state.panels[key];
           // Right-dock insight panels share one slot — opening one closes the others.
@@ -288,7 +315,9 @@ export class MacroDashboard {
         });
       });
 
-    this.root.querySelector("#ch-pause")?.addEventListener("click", () => {
+    this.root.querySelector("#ch-pause")?.addEventListener("pointerdown", (e) => {
+      if ((e as PointerEvent).button !== 0) return;
+      e.preventDefault();
       this.state.paused = !this.state.paused;
       this.changed();
     });
@@ -296,7 +325,9 @@ export class MacroDashboard {
     this.root
       .querySelectorAll<HTMLButtonElement>("[data-speed]")
       .forEach((btn) => {
-        btn.addEventListener("click", () => {
+        btn.addEventListener("pointerdown", (e) => {
+          if (e.button !== 0) return;
+          e.preventDefault();
           this.state.speed = Number(btn.dataset.speed) as 1 | 2 | 4 | 10;
           this.state.paused = false;
           this.changed();
@@ -308,55 +339,102 @@ export class MacroDashboard {
       this.changed();
     });
 
-    this.root.querySelector("#ch-clear-focus")?.addEventListener("click", () => {
-      this.state.focusEmpireId = null;
-      this.state.panels.empire = false;
-      this.changed();
-    });
-
-    // Wikipedia-style column sort + persistent row focus (delegation).
-    this.root.addEventListener("click", (e) => {
-      const target = e.target as HTMLElement;
-
-      const rosterHead = target.closest<HTMLElement>("[data-roster-sort]");
-      if (rosterHead) {
-        const key = rosterHead.dataset.rosterSort as RosterSort;
-        if (this.state.rosterSort === key) {
-          this.state.rosterAsc = !this.state.rosterAsc;
-        } else {
-          this.state.rosterSort = key;
-          this.state.rosterAsc = key === "name" || key === "archetype";
-        }
+    this.root
+      .querySelector("#ch-clear-focus")
+      ?.addEventListener("pointerdown", (e) => {
+        if ((e as PointerEvent).button !== 0) return;
+        e.preventDefault();
+        this.state.focusEmpireId = null;
+        this.state.panels.empire = false;
         this.changed();
-        return;
-      }
+      });
 
-      const milHead = target.closest<HTMLElement>("[data-mil-sort]");
-      if (milHead) {
-        const key = milHead.dataset.milSort as MilitarySort;
-        if (this.state.militarySort === key) {
-          this.state.militaryAsc = !this.state.militaryAsc;
-        } else {
-          this.state.militarySort = key;
-          this.state.militaryAsc = key === "name" || key === "doctrine";
+    // Act on pointerdown so a mid-frame DOM rebuild cannot cancel the gesture.
+    this.root.addEventListener(
+      "pointerdown",
+      (e) => {
+        if (e.button !== 0) return;
+        const target = e.target as HTMLElement;
+
+        const rosterHead = target.closest<HTMLElement>("[data-roster-sort]");
+        if (rosterHead) {
+          e.preventDefault();
+          const key = rosterHead.dataset.rosterSort as RosterSort;
+          if (this.state.rosterSort === key) {
+            this.state.rosterAsc = !this.state.rosterAsc;
+          } else {
+            this.state.rosterSort = key;
+            this.state.rosterAsc = key === "name" || key === "archetype";
+          }
+          this.changed();
+          return;
         }
-        this.changed();
-        return;
-      }
 
-      const milRow = target.closest<HTMLElement>("[data-mil-empire]");
-      if (milRow) {
-        const id = milRow.dataset.milEmpire as EmpireId;
-        this.setFocus(this.state.focusEmpireId === id ? null : id);
-        return;
-      }
+        const milHead = target.closest<HTMLElement>("[data-mil-sort]");
+        if (milHead) {
+          e.preventDefault();
+          const key = milHead.dataset.milSort as MilitarySort;
+          if (this.state.militarySort === key) {
+            this.state.militaryAsc = !this.state.militaryAsc;
+          } else {
+            this.state.militarySort = key;
+            this.state.militaryAsc = key === "name" || key === "doctrine";
+          }
+          this.changed();
+          return;
+        }
 
-      const row = target.closest<HTMLElement>("[data-empire]");
-      if (row && this.rosterBody?.contains(row)) {
-        const id = row.dataset.empire as EmpireId;
-        this.setFocus(this.state.focusEmpireId === id ? null : id);
-      }
-    });
+        const milRow = target.closest<HTMLElement>("[data-mil-empire]");
+        if (milRow) {
+          e.preventDefault();
+          const id = milRow.dataset.milEmpire as EmpireId;
+          this.setFocus(this.state.focusEmpireId === id ? null : id);
+          return;
+        }
+
+        const battle = target.closest<HTMLElement>("[data-battle-system]");
+        if (battle) {
+          e.preventDefault();
+          const sid = battle.dataset.battleSystem as SystemId;
+          this.setSelectedSystem(sid);
+          const owner = this.lastView?.systems[sid]?.ownerId ?? null;
+          if (owner) this.setFocus(owner);
+          return;
+        }
+
+        const closeEmpire = target.closest("#ch-close-empire");
+        if (closeEmpire) {
+          e.preventDefault();
+          this.state.panels.empire = false;
+          this.changed();
+          return;
+        }
+
+        const clearSel = target.closest("#ch-clear-selection");
+        if (clearSel) {
+          e.preventDefault();
+          this.setSelectedSystem(null);
+          return;
+        }
+
+        const row = target.closest<HTMLElement>("[data-empire]");
+        if (row && this.rosterBody?.contains(row)) {
+          e.preventDefault();
+          const id = row.dataset.empire as EmpireId;
+          this.setFocus(this.state.focusEmpireId === id ? null : id);
+        }
+      },
+      true,
+    );
+  }
+
+  private onHudPointerDown = (): void => {
+    this.pointerDepth += 1;
+  };
+
+  private onHudPointerUp = (): void => {
+    if (this.pointerDepth > 0) this.pointerDepth -= 1;
+    if (this.pointerDepth === 0) this.dirty = true;
   }
 
   setFocus(id: EmpireId | null): void {
@@ -390,7 +468,10 @@ export class MacroDashboard {
       btn?.classList.toggle("is-active", show);
     }
     const pause = this.root.querySelector("#ch-pause");
-    if (pause) pause.textContent = this.state.paused ? "Resume" : "Pause";
+    if (pause) {
+      const label = this.state.paused ? "Resume" : "Pause";
+      if (pause.textContent !== label) pause.textContent = label;
+    }
     this.root
       .querySelectorAll<HTMLButtonElement>("[data-speed]")
       .forEach((btn) => {
@@ -476,6 +557,7 @@ export class MacroDashboard {
     const pinned = ordered.slice(0, this.state.pinTopN);
     const pinnedSet = new Set(pinned);
 
+    let insertBefore: ChildNode | null = body.firstChild;
     for (const id of pinned) {
       const empire = view.empires[id]!;
       const row = this.ensureRow(id);
@@ -489,7 +571,11 @@ export class MacroDashboard {
       row.root.classList.toggle("is-focus", this.state.focusEmpireId === id);
       row.root.classList.toggle("is-dead", !empire.alive);
       row.root.style.display = "";
-      body.appendChild(row.root);
+      // Only move the node when order actually changed — re-append cancels clicks.
+      if (row.root !== insertBefore) {
+        body.insertBefore(row.root, insertBefore);
+      }
+      insertBefore = row.root.nextSibling;
     }
 
     for (const [id, row] of this.rows) {
@@ -630,9 +716,6 @@ export class MacroDashboard {
       ${front}
       ${eng}
     `;
-    card
-      .querySelector("#ch-clear-selection")
-      ?.addEventListener("click", () => this.setSelectedSystem(null));
   }
 
   private renderMilitary(view: InterpolatedSnapshot): void {
@@ -762,15 +845,6 @@ export class MacroDashboard {
     host.innerHTML = rows.length
       ? `<div class="ch-battles-list">${rows.map((r) => r.html).join("")}</div>`
       : `<p class="ch-hint">No active engagements.</p>`;
-
-    host.querySelectorAll<HTMLElement>("[data-battle-system]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const sid = btn.dataset.battleSystem as SystemId;
-        this.setSelectedSystem(sid);
-        const owner = view.systems[sid]?.ownerId ?? null;
-        if (owner) this.setFocus(owner);
-      });
-    });
   }
 
   private renderEmpireDetail(view: InterpolatedSnapshot): void {
@@ -930,10 +1004,6 @@ export class MacroDashboard {
       }</div>
     `;
 
-    host.querySelector("#ch-close-empire")?.addEventListener("click", () => {
-      this.state.panels.empire = false;
-      this.changed();
-    });
   }
 
   private handleEliminationAlerts(
