@@ -63,19 +63,19 @@ const TUNING: Record<BotDifficulty, Tuning> = {
   },
   normal: {
     cadence: 30,
-    attackMargin: 1.45,
+    attackMargin: 1.35,
     spendFraction: 0.65,
     researches: true,
     defends: true,
-    maxPushes: 1,
+    maxPushes: 2,
   },
   hard: {
-    cadence: 14,
-    attackMargin: 1.2,
+    cadence: 12,
+    attackMargin: 1.08,
     spendFraction: 0.9,
     researches: true,
     defends: true,
-    maxPushes: 2,
+    maxPushes: 3,
   },
 };
 
@@ -396,8 +396,10 @@ function scoreTargets(
 
 /**
  * Only homeworlds and core worlds grow population, so conquest is a logistics
- * problem: load colonists at a depot, escort them to the frontier, flip the
- * system. A fleet parked on a captured relay can never take anything.
+ * problem: concentrate guns on the frontier, clear defenders (raid if needed),
+ * ferry colonists, flip. Earlier versions only launched from pop depots with a
+ * *single* fleet — armies parked on the border never attacked and the map
+ * froze into symmetric mega-stacks.
  */
 function offenseIntents(
   state: GameState,
@@ -414,10 +416,17 @@ function offenseIntents(
   if (targets.length === 0) return out;
   let pushes = 0;
 
-  const canBeat = (fleet: Fleet, target: Target): boolean => {
-    const escort = fleetPower(fleet.composition, balance);
-    if (target.defense === 0) return true;
-    return escort >= target.defense * tuning.attackMargin;
+  const marginFor = (defense: number): number => {
+    // Late game: slightly greedier so hard bots break stalemates.
+    let m = tuning.attackMargin;
+    if (brain.policy === "hard" && state.tick > 2500) m = Math.min(m, 1.02);
+    if (defense <= 0) return 0;
+    return m;
+  };
+
+  const canBeatPower = (power: number, target: Target): boolean => {
+    if (target.defense <= 0) return true;
+    return power >= target.defense * marginFor(target.defense);
   };
 
   // 1. Fleets already carrying colonists head for the best system they can flip.
@@ -428,77 +437,233 @@ function offenseIntents(
     const carried = fleet.invasionPopulation ?? 0;
     if (carried <= 0) continue;
     const here = fleet.location.nodeId;
+    // Count sibling idle fleets at the same node — they leave together.
+    const local =
+      fleetPower(fleet.composition, balance) +
+      idleFleetsAt(state, me, here)
+        .filter((f) => f.id !== fleet.id && !committed.has(f.id))
+        .reduce((s, f) => s + fleetPower(f.composition, balance), 0);
     const reachable = targets
-      .filter((t) => t.popNeeded <= carried && canBeat(fleet, t))
+      .filter((t) => t.popNeeded <= carried && canBeatPower(local, t))
       .map((t) => ({ t, path: routeTo(state, here, t.id, mine) }))
       .filter((x): x is { t: Target; path: NodeId[] } => x.path !== null)
       .sort((a, b) => a.path.length - b.path.length || b.t.score - a.t.score);
     const go = reachable[0];
     if (!go) continue;
-    committed.add(fleet.id);
-    out.push(
-      stamp(brain, { type: "MoveFleet", fleetId: fleet.id, path: go.path }),
-    );
+    // Send the colonist fleet and every other idle stack here.
+    for (const f of idleFleetsAt(state, me, here)) {
+      if (committed.has(f.id)) continue;
+      if (fleetPower(f.composition, balance) <= 0 && !f.invasionPopulation)
+        continue;
+      committed.add(f.id);
+      out.push(
+        stamp(brain, {
+          type: "MoveFleet",
+          fleetId: f.id,
+          path: go.path,
+          ...(f.id !== fleet.id && !f.invasionPopulation
+            ? { raidOnly: true }
+            : {}),
+        }),
+      );
+    }
     pushes += 1;
   }
 
-  // 2. Load colonists wherever they are stockpiled and set out.
-  const depots = owned
-    .filter((id) => state.nodes[id]!.population > 0)
-    .sort((a, b) => state.nodes[b]!.population - state.nodes[a]!.population);
-
-  for (const depot of depots) {
+  // 2. Frontier staging pushes — use the army already on the border.
+  for (const target of targets) {
     if (pushes >= tuning.maxPushes) break;
-    const stock = state.nodes[depot]!.population;
-    const fleets = idleFleetsAt(state, me, depot)
-      .filter((f) => !committed.has(f.id) && !f.invasionPopulation)
+    const staging = target.staging;
+    const fleetsHere = idleFleetsAt(state, me, staging)
+      .filter((f) => !committed.has(f.id))
       .sort(
         (a, b) =>
           fleetPower(b.composition, balance) -
           fleetPower(a.composition, balance),
       );
-    const lead = fleets[0];
-    if (!lead) continue;
-
-    const option = targets
-      .filter((t) => t.popNeeded <= stock && canBeat(lead, t))
-      .map((t) => ({ t, path: routeTo(state, depot, t.id, mine) }))
-      .filter((x): x is { t: Target; path: NodeId[] } => x.path !== null)
-      .sort((a, b) => b.t.score / a.path.length - a.t.score / b.path.length)[0];
-    if (!option) continue;
-
-    committed.add(lead.id);
-    out.push(
-      stamp(brain, {
-        type: "CommitInvasion",
-        fleetId: lead.id,
-        population: option.t.popNeeded,
-        fromNodeId: depot,
-      }),
+    const localPower = fleetsHere.reduce(
+      (s, f) => s + fleetPower(f.composition, balance),
+      0,
     );
-    out.push(
-      stamp(brain, { type: "MoveFleet", fleetId: lead.id, path: option.path }),
+    if (!canBeatPower(localPower, target)) continue;
+
+    const path = routeTo(state, staging, target.id, mine);
+    if (!path) continue;
+
+    const stock = state.nodes[staging]!.population;
+    const loaded = fleetsHere.find(
+      (f) => (f.invasionPopulation ?? 0) >= target.popNeeded,
     );
-    pushes += 1;
+    const canClaim =
+      Boolean(loaded) ||
+      (stock >= target.popNeeded && fleetsHere.length > 0);
+
+    if (canClaim) {
+      const carrier =
+        loaded ??
+        fleetsHere.find((f) => fleetPower(f.composition, balance) > 0) ??
+        fleetsHere[0]!;
+      if (!loaded && stock >= target.popNeeded) {
+        out.push(
+          stamp(brain, {
+            type: "CommitInvasion",
+            fleetId: carrier.id,
+            population: target.popNeeded,
+            fromNodeId: staging,
+          }),
+        );
+      }
+      for (const f of fleetsHere) {
+        if (committed.has(f.id)) continue;
+        committed.add(f.id);
+        out.push(
+          stamp(brain, {
+            type: "MoveFleet",
+            fleetId: f.id,
+            path,
+            ...(f.id !== carrier.id ? { raidOnly: true } : {}),
+          }),
+        );
+      }
+      pushes += 1;
+      continue;
+    }
+
+    // Guns are ready but colonists aren't here — raid to break the deadlock,
+    // and start a colonist ferry from a rear depot.
+    if (target.defense > 0 && localPower > 0) {
+      for (const f of fleetsHere) {
+        if (committed.has(f.id)) continue;
+        if (fleetPower(f.composition, balance) <= 0) continue;
+        committed.add(f.id);
+        out.push(
+          stamp(brain, {
+            type: "MoveFleet",
+            fleetId: f.id,
+            path,
+            raidOnly: true,
+          }),
+        );
+      }
+      pushes += 1;
+    }
+
+    const depot = owned
+      .filter(
+        (id) =>
+          id !== staging &&
+          (state.nodes[id]!.population ?? 0) >= target.popNeeded,
+      )
+      .sort(
+        (a, b) => state.nodes[b]!.population - state.nodes[a]!.population,
+      )[0];
+    if (depot) {
+      const ferry =
+        idleFleetsAt(state, me, depot).find(
+          (f) => !committed.has(f.id) && !f.invasionPopulation,
+        ) ?? null;
+      if (ferry) {
+        const ferryPath = routeTo(state, depot, target.id, mine);
+        if (ferryPath) {
+          committed.add(ferry.id);
+          out.push(
+            stamp(brain, {
+              type: "CommitInvasion",
+              fleetId: ferry.id,
+              population: target.popNeeded,
+              fromNodeId: depot,
+            }),
+          );
+          out.push(
+            stamp(brain, {
+              type: "MoveFleet",
+              fleetId: ferry.id,
+              path: ferryPath,
+            }),
+          );
+        }
+      }
+    }
   }
 
-  // 3. Nothing to escort? Bring an idle fleet home to pick colonists up.
+  // 3. Reinforce under-powered staging nodes (don't yank armies back to home).
   if (pushes === 0) {
-    const depot = depots[0];
-    if (depot) {
+    const focus = targets[0]!;
+    const staging = focus.staging;
+    const local = powerAt(state, staging, balance, (o) => o === me);
+    if (!canBeatPower(local, focus)) {
       for (const id of owned) {
-        if (id === depot) continue;
+        if (id === staging) continue;
         const fleet = idleFleetsAt(state, me, id).find(
-          (f) => !committed.has(f.id) && fleetPower(f.composition, balance) > 0,
+          (f) =>
+            !committed.has(f.id) &&
+            !f.invasionPopulation &&
+            fleetPower(f.composition, balance) > 0,
         );
         if (!fleet) continue;
-        const path = routeTo(state, id, depot, mine);
+        const path = routeTo(state, id, staging, mine);
         if (!path) continue;
         committed.add(fleet.id);
         out.push(
           stamp(brain, { type: "MoveFleet", fleetId: fleet.id, path }),
         );
         break;
+      }
+    } else {
+      // Staging is strong enough — ferry colonists from the richest depot.
+      const depot = owned
+        .filter((id) => (state.nodes[id]!.population ?? 0) > 0)
+        .sort(
+          (a, b) => state.nodes[b]!.population - state.nodes[a]!.population,
+        )[0];
+      if (depot && depot !== staging) {
+        const ferry = idleFleetsAt(state, me, depot).find(
+          (f) => !committed.has(f.id) && !f.invasionPopulation,
+        );
+        if (ferry && state.nodes[depot]!.population >= focus.popNeeded) {
+          const path = routeTo(state, depot, focus.id, mine);
+          if (path) {
+            committed.add(ferry.id);
+            out.push(
+              stamp(brain, {
+                type: "CommitInvasion",
+                fleetId: ferry.id,
+                population: focus.popNeeded,
+                fromNodeId: depot,
+              }),
+            );
+            out.push(
+              stamp(brain, { type: "MoveFleet", fleetId: ferry.id, path }),
+            );
+          }
+        } else {
+          // No ferry on the depot — send the weakest rear fleet there to load.
+          let weakest: { fleet: Fleet; path: NodeId[]; power: number } | null =
+            null;
+          for (const id of owned) {
+            if (id === depot || id === staging) continue;
+            for (const fleet of idleFleetsAt(state, me, id)) {
+              if (committed.has(fleet.id) || fleet.invasionPopulation) continue;
+              const p = fleetPower(fleet.composition, balance);
+              if (p <= 0) continue;
+              const path = routeTo(state, id, depot, mine);
+              if (!path) continue;
+              if (!weakest || p < weakest.power) {
+                weakest = { fleet, path, power: p };
+              }
+            }
+          }
+          if (weakest) {
+            committed.add(weakest.fleet.id);
+            out.push(
+              stamp(brain, {
+                type: "MoveFleet",
+                fleetId: weakest.fleet.id,
+                path: weakest.path,
+              }),
+            );
+          }
+        }
       }
     }
   }
@@ -521,20 +686,47 @@ function regroupIntents(
   );
   if (frontier.length === 0) return [];
 
+  // Prefer the frontier node facing the highest enemy power — that's where
+  // the next fight will be.
+  let bestFrontier = frontier[0]!;
+  let bestThreat = -1;
+  for (const id of frontier) {
+    const threat = powerAt(
+      state,
+      // Look at hostile neighbours' power on adjacent enemy nodes.
+      id,
+      balance,
+      (o) => isHostile(state, o, me),
+      true,
+    );
+    // Also peek at neighbouring hostile systems.
+    let border = threat;
+    for (const n of neighborsOf(state, id)) {
+      if (ownedSet.has(n)) continue;
+      border += powerAt(state, n, balance, (o) => isHostile(state, o, me));
+    }
+    if (border > bestThreat) {
+      bestThreat = border;
+      bestFrontier = id;
+    }
+  }
+
   for (const id of owned) {
     if (frontier.includes(id)) continue;
-    for (const fleet of idleFleetsAt(state, me, id)) {
+    // Leave at least a token fleet on pop depots so offense can ferry colonists.
+    const pop = state.nodes[id]!.population;
+    const here = idleFleetsAt(state, me, id).filter(
+      (f) => !committed.has(f.id) && fleetPower(f.composition, balance) > 0,
+    );
+    if (pop > 0 && here.length <= 1) continue;
+
+    for (const fleet of here) {
       if (committed.has(fleet.id)) continue;
-      if (fleetPower(fleet.composition, balance) <= 0) continue;
-      // Head for the nearest frontier system.
-      let best: NodeId[] | null = null;
-      for (const f of frontier) {
-        const path = routeTo(state, id, f, (n) => ownedSet.has(n));
-        if (path && (!best || path.length < best.length)) best = path;
-      }
-      if (best) {
+      if (fleet.invasionPopulation) continue;
+      const path = routeTo(state, id, bestFrontier, (n) => ownedSet.has(n));
+      if (path) {
         committed.add(fleet.id);
-        return [stamp(brain, { type: "MoveFleet", fleetId: fleet.id, path: best })];
+        return [stamp(brain, { type: "MoveFleet", fleetId: fleet.id, path })];
       }
     }
   }

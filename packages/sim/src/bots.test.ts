@@ -151,4 +151,70 @@ describe("bot brains", () => {
         .join("|");
     expect(snap(a.state)).toBe(snap(b.state));
   });
+
+  it("raid from a powered frontier instead of idling in a stalemate", () => {
+    const { state, config } = createMatch({
+      seed: 107,
+      playerCount: 2,
+      nodeCount: 20,
+    });
+    const brain: BotBrain = {
+      playerId: "p0",
+      clientId: state.players.p0!.clientId ?? "c0",
+      policy: "hard",
+      seq: 0,
+    };
+    // Force a shared border: put both homes adjacent if needed by seating fleets
+    // on an owned node next to an enemy-held system.
+    const enemyNodes = Object.values(state.nodes).filter(
+      (n) => n.ownerId && n.ownerId !== "p0",
+    );
+    const enemy = enemyNodes[0]!;
+    const staging = state.map.nodes[enemy.id]!.neighbors.find(
+      (n) => state.nodes[n]?.ownerId === "p0",
+    );
+    // If homes aren't adjacent, gift a neighbour to p0.
+    let stageId = staging;
+    if (!stageId) {
+      const nbr = state.map.nodes[enemy.id]!.neighbors[0]!;
+      state.nodes[nbr]!.ownerId = "p0";
+      state.nodes[nbr]!.population = 0;
+      stageId = nbr;
+    }
+    // Park a huge idle army on the border with no colonists available there.
+    const fleetId = "raid-stack";
+    state.fleets[fleetId] = {
+      id: fleetId,
+      ownerId: "p0",
+      composition: { fighter: 200 },
+      location: { kind: "node", nodeId: stageId },
+    };
+    // Enemy parks a smaller force on the target.
+    state.fleets["enemy-stack"] = {
+      id: "enemy-stack",
+      ownerId: enemy.ownerId!,
+      composition: { fighter: 40 },
+      location: { kind: "node", nodeId: enemy.id },
+    };
+    // Drain pop from staging so a claim isn't possible this cycle — must raid.
+    state.nodes[stageId]!.population = 0;
+
+    // Align tick to hard cadence phase.
+    for (let t = 0; t < 40; t++) {
+      state.tick = t;
+      const intents = botIntents(state, brain, config.balance);
+      const raid = intents.find(
+        (i) =>
+          i.intent.type === "MoveFleet" &&
+          i.intent.fleetId === fleetId &&
+          i.intent.raidOnly === true &&
+          i.intent.path.at(-1) === enemy.id,
+      );
+      if (raid) {
+        expect(raid).toBeDefined();
+        return;
+      }
+    }
+    expect.fail("expected a raidOnly push across the frontier");
+  });
 });
