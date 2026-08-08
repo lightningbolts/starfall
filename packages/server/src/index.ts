@@ -9,7 +9,9 @@ function arg(name: string): string | undefined {
 
 const port = Number(arg("port") ?? 8787);
 const seed = arg("seed") ? Number(arg("seed")) : undefined;
-const ticks = arg("ticks") ? Number(arg("ticks")) : undefined;
+/** 0 or omit = last player standing (no time limit). */
+const ticksRaw = arg("ticks");
+const ticks = ticksRaw !== undefined ? Number(ticksRaw) : 0;
 const players = arg("players") ? Number(arg("players")) : undefined;
 const staticDir = arg("static");
 const telemetry = arg("telemetry");
@@ -29,5 +31,9 @@ console.log(`WebSocket: ws://localhost:${bound}/ws`);
 console.log(`Metrics: http://localhost:${bound}/metrics`);
 console.log(`Capacity: ${srv.room.capacity}`);
 if (seed != null) console.log(`Seed: ${seed}`);
-if (ticks != null) console.log(`Round ticks: ${ticks}`);
+if (ticks > 0) {
+  console.log(`Round ticks: ${ticks} (timed score finish)`);
+} else {
+  console.log(`Win: last player standing (no time limit)`);
+}
 if (telemetry) console.log(`Telemetry JSONL: ${telemetry}`);

@@ -169,7 +169,8 @@ Policy: [rulings.md](./rulings.md) §2.
 | Per researched tech | 5 |
 | Elimination bonus (to capturer on knock-out) | 50 |
 
-Elimination of all rivals: instant win (overrides score). Time-limit win: highest score (includes elimination bonuses).
+Elimination of all rivals: instant win (last player standing — default for multiplayer).  
+Optional timed finish: only when `roundTicks > 0` (pass `--ticks N` to the server); then highest score wins.
 
 When iterating numbers: run a match, read `GET /metrics` (or CLI FFA telemetry summary), then adjust `docs/design/balance.csv` and mirror in `packages/sim/src/balance.ts`.
 

@@ -14,27 +14,32 @@ npm exec --yes pnpm@9.15.0 test
 
 ### Local multiplayer
 
-Terminal 1 — authoritative match host (default capacity **100**):
+One command (server + web):
 
 ```bash
-npm exec --yes pnpm@9.15.0 server -- --seed 42 --ticks 3600
-# optional: --players 8 for a small lobby; --telemetry out.jsonl
+npm exec --yes pnpm@9.15.0 run dev
 ```
 
-Terminal 2 — web client (proxies `/ws` to the server):
+Or two terminals:
 
 ```bash
-npm exec --yes pnpm@9.15.0 web
+# Terminal 1 — game server (must stay running)
+npm exec --yes pnpm@9.15.0 run server -- --seed 42 --players 8
+
+# Terminal 2 — Vite (proxies /ws → :8787)
+npm exec --yes pnpm@9.15.0 run web
 ```
 
-Open two browser tabs to `http://localhost:5173`, join with different names, Ready both (or host Start). Short rounds default to **3600 ticks** (~6 min); pass `--ticks 12000` for a full 20-minute round.
+Open two browser tabs to `http://localhost:5173`, join with different names, Ready both (or host Start).
+
+Win condition defaults to **last player standing** (no clock). Pass `--ticks N` only if you want a timed score-based finish.
 
 Client `clientId` is persisted in `localStorage` for reconnect. Diplomacy: propose from the ranks list or selected enemy node; accept/break in the Diplomacy panel.
 
 LAN: build the client (`pnpm --filter @starfall/web build`) then serve it from the server:
 
 ```bash
-npm exec --yes pnpm@9.15.0 server -- --static apps/web/dist --port 8787
+npm exec --yes pnpm@9.15.0 run server -- --static apps/web/dist --port 8787
 ```
 
 Metrics while a match runs: `http://localhost:8787/metrics`
@@ -48,7 +53,7 @@ npm exec --yes pnpm@9.15.0 load
 ### Headless bot FFA (Phase 1)
 
 ```bash
-npm exec --yes pnpm@9.15.0 sim:ffa -- --seed 42 --players 8 --ticks 12000
+npm exec --yes pnpm@9.15.0 run sim:ffa -- --seed 42 --players 8 --ticks 12000
 ```
 
 Prints a telemetry summary at the end (combat sizes, annex rates, snowball ratio).

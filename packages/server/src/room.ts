@@ -107,8 +107,8 @@ export class MatchRoom {
       opts.fullSnapshotEvery ?? DEFAULTS.fullSnapshotEvery;
     this.telemetryPath = opts.telemetryPath ?? null;
     this.seed = opts.seed ?? Math.floor(Math.random() * 1e9);
-    this.roundTicks =
-      opts.roundTicks ?? Math.min(DEFAULT_BALANCE.roundTicks, 3600);
+    // 0 = unlimited (last player standing). Pass --ticks N for a timed score finish.
+    this.roundTicks = opts.roundTicks ?? 0;
     this.config = createSimConfig(DEFAULT_BALANCE, {
       roundTicks: this.roundTicks,
     });

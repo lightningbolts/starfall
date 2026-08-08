@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_BALANCE } from "./balance.js";
+import { DEFAULT_BALANCE, createSimConfig } from "./balance.js";
 import { createMatch } from "./match.js";
 import { emptyTurn, executeNextTick } from "./tick.js";
 import {
@@ -45,6 +45,35 @@ describe("elimination bonus", () => {
     expect(p0.score).toBeGreaterThanOrEqual(
       DEFAULT_BALANCE.score.eliminationBonus,
     );
+  });
+
+  it("last standing wins with no time limit (roundTicks 0)", () => {
+    const { state, game, config } = createMatch({
+      seed: 12,
+      playerCount: 2,
+      nodeCount: 16,
+      config: createSimConfig(DEFAULT_BALANCE, { roundTicks: 0 }),
+    });
+    // Eliminate p1 by stripping all nodes
+    for (const n of Object.values(state.nodes)) {
+      if (n.ownerId === "p1") n.ownerId = "p0";
+    }
+    state.players.p1!.eliminated = true;
+    executeNextTick(state, emptyTurn(0), config, game);
+    expect(state.status).toBe("finished");
+    expect(state.winnerId).toBe("p0");
+  });
+
+  it("does not score-finish when roundTicks is 0 even after many ticks", () => {
+    const { state, game, config } = createMatch({
+      seed: 13,
+      playerCount: 2,
+      nodeCount: 16,
+      config: createSimConfig(DEFAULT_BALANCE, { roundTicks: 0 }),
+    });
+    state.tick = 50_000;
+    executeNextTick(state, emptyTurn(0), config, game);
+    expect(state.status).toBe("running");
   });
 });
 

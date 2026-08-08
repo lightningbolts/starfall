@@ -370,10 +370,19 @@ function updateHud(): void {
   }
   document.getElementById("pop")!.textContent = String(pop);
   const remain = Math.max(0, roundTicks - view.tick);
-  const sec = Math.ceil(remain / 10);
-  const m = Math.floor(sec / 60);
-  const s = sec % 60;
-  document.getElementById("timer")!.textContent = `${m}:${String(s).padStart(2, "0")}`;
+  if (roundTicks <= 0) {
+    const elapsedSec = Math.floor(view.tick / 10);
+    const m = Math.floor(elapsedSec / 60);
+    const s = elapsedSec % 60;
+    document.getElementById("timer")!.textContent =
+      `${m}:${String(s).padStart(2, "0")} · FFA`;
+  } else {
+    const sec = Math.ceil(remain / 10);
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    document.getElementById("timer")!.textContent =
+      `${m}:${String(s).padStart(2, "0")}`;
+  }
   const mine = ranks.find((r) => r.playerId === view!.self.id);
   document.getElementById("rank")!.textContent = mine
     ? `Rank ${mine.rank} · ${mine.score}`

@@ -12,8 +12,9 @@
     "build": "pnpm -r run build",
     "test": "pnpm --filter @starfall/sim test && pnpm --filter @starfall/server test",
     "sim:ffa": "pnpm --filter @starfall/cli start",
-    "server": "pnpm --filter @starfall/server start",
-    "web": "pnpm --filter @starfall/web dev",
+    "server": "pnpm --filter @starfall/server exec tsx src/index.ts",
+    "web": "pnpm --filter @starfall/web exec vite",
+    "dev": "sh -c 'pnpm run server -- --seed 42 --players 8 & spid=$!; trap \"kill $spid 2>/dev/null\" EXIT INT TERM; pnpm run web'",
     "smoke": "pnpm --filter @starfall/server smoke",
     "load": "pnpm --filter @starfall/server load",
     "typecheck": "pnpm -r run typecheck"

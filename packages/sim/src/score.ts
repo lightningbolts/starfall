@@ -50,7 +50,9 @@ export function checkWin(game: Game): void {
     return;
   }
 
-  if (game.state.tick >= game.config.roundTicks()) {
+  // Optional timed finish only when roundTicks > 0 (0 / unset = last standing only)
+  const limit = game.config.roundTicks();
+  if (limit > 0 && game.state.tick >= limit) {
     game.state.status = "finished";
     let best: PlayerId | null = null;
     let bestScore = -Infinity;
@@ -59,7 +61,6 @@ export function checkWin(game: Game): void {
         bestScore = p.score;
         best = p.id;
       } else if (p.score === bestScore && best !== null) {
-        // Tie-break: lower player id
         if (p.id < best) best = p.id;
       }
     }
