@@ -1,9 +1,53 @@
+# Dependencies
 node_modules/
+.pnpm-store/
+
+# Builds
 dist/
+build/
 *.tsbuildinfo
-.DS_Store
+apps/web/dist/
+
+# Vite
+apps/web/.vite/
+**/.vite/
+
+# Test / coverage
 coverage/
+*.lcov
+.nyc_output/
+
+# Logs & debug
 *.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Env / secrets
 .env
 .env.*
+!.env.example
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors / IDEs
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+*.swp
+*.swo
+*~
+
+# Caches / tooling
 .turbo/
+.cache/
+.eslintcache
+.tmp/
+tmp/
+
+# Optional local overrides
+*.local

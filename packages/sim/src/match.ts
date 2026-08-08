@@ -10,12 +10,19 @@ import type {
   PlayerState,
 } from "./types.js";
 
+export interface SeatRosterEntry {
+  clientId: ClientId;
+  displayName: string;
+}
+
 export interface CreateMatchOptions {
   seed: number;
   playerCount: number;
   nodeCount?: number;
   config?: SimConfig;
   playerNames?: string[];
+  /** When set, length must equal playerCount; overrides invented c0..cN ids. */
+  seats?: SeatRosterEntry[];
 }
 
 export function createMatch(opts: CreateMatchOptions): {
@@ -24,6 +31,11 @@ export function createMatch(opts: CreateMatchOptions): {
   config: SimConfig;
 } {
   const config = opts.config ?? createSimConfig(DEFAULT_BALANCE);
+  if (opts.seats && opts.seats.length !== opts.playerCount) {
+    throw new Error(
+      `seats length ${opts.seats.length} !== playerCount ${opts.playerCount}`,
+    );
+  }
   const galaxy = generateGalaxy({
     seed: opts.seed,
     playerCount: opts.playerCount,
@@ -49,12 +61,14 @@ export function createMatch(opts: CreateMatchOptions): {
 
   for (let i = 0; i < opts.playerCount; i++) {
     const playerId = `p${i}`;
-    const clientId = `c${i}`;
+    const seat = opts.seats?.[i];
+    const clientId = seat?.clientId ?? `c${i}`;
     const homeId = galaxy.homeworldIds[i]!;
     players[playerId] = {
       id: playerId,
       clientId,
-      displayName: opts.playerNames?.[i] ?? `Player ${i}`,
+      displayName:
+        seat?.displayName ?? opts.playerNames?.[i] ?? `Player ${i}`,
       credits: bal.start.credits,
       researched: new Set(),
       allies: [],

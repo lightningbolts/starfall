@@ -2,7 +2,7 @@
 
 Space territory conquest on a **graph** (systems = nodes, lanes = edges). Easy to learn, high skill ceiling, 15–30 minute rounds, targeting 50–100 player FFA.
 
-**Current status:** Phase 1 — headless sim + bots (`packages/sim`, `apps/cli`). Design docs under [`docs/`](./docs/).
+**Current status:** Phase 2 — local multiplayer (`packages/server` + `apps/web` on top of `packages/sim`).
 
 ## Quick start
 
@@ -10,13 +10,34 @@ Space territory conquest on a **graph** (systems = nodes, lanes = edges). Easy t
 # requires Node >= 20; uses pnpm via npm exec if not installed globally
 npm exec --yes pnpm@9.15.0 install
 npm exec --yes pnpm@9.15.0 test
-npm exec --yes pnpm@9.15.0 sim:ffa -- --seed 42 --players 8 --ticks 12000
 ```
 
-Shorter smoke FFA (2 simulated minutes):
+### Local multiplayer (Phase 2)
+
+Terminal 1 — authoritative match host:
 
 ```bash
-npm exec --yes pnpm@9.15.0 sim:ffa -- --seed 42 --players 8 --ticks 1200
+npm exec --yes pnpm@9.15.0 server -- --seed 42 --ticks 3600
+```
+
+Terminal 2 — web client (proxies `/ws` to the server):
+
+```bash
+npm exec --yes pnpm@9.15.0 web
+```
+
+Open two browser tabs to `http://localhost:5173`, join with different names, Ready both (or host Start). Short rounds default to **3600 ticks** (~6 min); pass `--ticks 12000` for a full 20-minute round.
+
+LAN: build the client (`pnpm --filter @starfall/web build`) then serve it from the server:
+
+```bash
+npm exec --yes pnpm@9.15.0 server -- --static apps/web/dist --port 8787
+```
+
+### Headless bot FFA (Phase 1)
+
+```bash
+npm exec --yes pnpm@9.15.0 sim:ffa -- --seed 42 --players 8 --ticks 12000
 ```
 
 ## Design goals
@@ -35,8 +56,8 @@ npm exec --yes pnpm@9.15.0 sim:ffa -- --seed 42 --players 8 --ticks 1200
 
 ## Stack
 
-- TypeScript monorepo (pnpm): `packages/sim` (pure Intent/Execution tick engine), `apps/cli` (bot FFA)
+- TypeScript monorepo (pnpm): `packages/sim` (pure Intent/Execution tick engine), `packages/server` (WebSocket host), `apps/web` (Canvas map), `apps/cli` (bot FFA)
 - OpenFront-style loop: **100ms** turns/ticks, `executeNextTick`
-- Next: `packages/server` + `apps/web` (Phase 2)
+- Authoritative server sim + fogged `PlayerView` (ADR 002)
 
 See [docs/adr/001-tick-engine.md](./docs/adr/001-tick-engine.md) and [docs/adr/002-multiplayer-architecture.md](./docs/adr/002-multiplayer-architecture.md).

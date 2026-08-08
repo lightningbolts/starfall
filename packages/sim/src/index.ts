@@ -64,7 +64,11 @@ export {
   emptyTurn,
   attachOngoingExecutions,
 } from "./tick.js";
-export { createMatch, type CreateMatchOptions } from "./match.js";
+export {
+  createMatch,
+  type CreateMatchOptions,
+  type SeatRosterEntry,
+} from "./match.js";
 export {
   generateGalaxy,
   validateGalaxy,
@@ -72,3 +76,38 @@ export {
   type GeneratedGalaxy,
 } from "./galaxy.js";
 export { computeScores, checkWin } from "./score.js";
+export {
+  computeVisibleNodes,
+  computePlayerVisionSet,
+  nodesWithinHops,
+  relayVisionBonusHops,
+  isLocationVisible,
+} from "./vision.js";
+export {
+  buildPlayerView,
+  createVisionMemory,
+  isFoggedNode,
+  type VisionMemory,
+  type PlayerView,
+  type PlayerViewSelf,
+  type ViewNode,
+  type LastKnownNode,
+} from "./view.js";
+export type {
+  ClientMessage,
+  ServerMessage,
+  HelloMessage,
+  WelcomeMessage,
+  SetReadyMessage,
+  StartMatchMessage,
+  LobbyUpdateMessage,
+  LobbySeat,
+  MatchStartMessage,
+  ClientIntentMessage,
+  TurnMessage,
+  TickUpdateMessage,
+  MatchOverMessage,
+  ErrorMessage,
+  ScoreRank,
+  WirePhase,
+} from "./protocol.js";

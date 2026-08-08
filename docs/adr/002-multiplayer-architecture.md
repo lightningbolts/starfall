@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (vision) — not implemented yet
+Accepted — skeleton implemented (`packages/server` authoritative sim + `apps/web`). Full client-side lockstep remains optional later.
 
 ## Context
 

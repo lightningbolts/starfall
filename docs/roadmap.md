@@ -15,7 +15,7 @@ Design-first path toward a TypeScript multiplayer FFA skeleton.
 
 **Exit:** implementers can build `packages/sim` without reopening combat, annexation, currencies, tech unlocks, or tick order. Rulings checklist in [rulings.md](./design/rulings.md) is checked.
 
-## Phase 1 — Headless sim + bots (current)
+## Phase 1 — Headless sim + bots
 
 - [x] Scaffold monorepo (`packages/sim`)
 - [x] Implement OpenFront-style `Executor` / `Execution` / `executeNextTick` (100ms ticks)
@@ -26,11 +26,11 @@ Design-first path toward a TypeScript multiplayer FFA skeleton.
 
 **Exit:** 20-minute simulated FFA with bots completes and produces a scoreboard.
 
-## Phase 2 — Local multiplayer
+## Phase 2 — Local multiplayer (current)
 
-- `packages/server` WebSocket match host
-- Vision filter + command validation
-- Minimal `apps/web` graph map (nodes/edges, fleets, orders)
+- [x] `packages/server` WebSocket match host
+- [x] Vision filter + command validation
+- [x] Minimal `apps/web` graph map (nodes/edges, fleets, orders)
 
 **Exit:** 4–8 humans can finish a short round on a LAN/localhost.
 
@@ -51,5 +51,5 @@ Design-first path toward a TypeScript multiplayer FFA skeleton.
 
 ---
 
-Phase 1 exit met: `pnpm sim:ffa -- --seed 42 --players 8 --ticks 12000` prints a scoreboard.
-Phase 2+ remain future work.
+Phase 1 exit met: `pnpm sim:ffa -- --seed 42 --players 8 --ticks 12000` prints a scoreboard.  
+Phase 2 exit: `pnpm server` + `pnpm web` — two browsers can join, play, and finish a short round.
