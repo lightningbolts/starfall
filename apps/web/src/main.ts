@@ -28,6 +28,15 @@ import { MapRenderer, type RenderState } from "./renderer.js";
 
 const BAL = DEFAULT_BALANCE;
 
+const ROLE_FILL_CSS: Record<string, string> = {
+  homeworld: "#4a6fa5",
+  core_world: "#3d8f6e",
+  resource: "#c4a035",
+  shipyard: "#8b5a9e",
+  relay: "#6b7c8f",
+  relic: "#d4c07a",
+};
+
 const TECH_BLURB: Record<TechId, string> = {
   advanced_propulsion: "War fleets move faster",
   fortified_colonies: "Stronger garrisons",
@@ -143,6 +152,7 @@ const renderState: RenderState = {
   pathPreview: [],
   ownershipPulse: new Map(),
   combatFlash: 0,
+  combatBursts: [],
 };
 
 function emptyView(): PlayerView {
@@ -426,11 +436,35 @@ function applyTickUpdate(msg: TickUpdateMessage): void {
 
   // Only flash for combats the player can see (avoid bot wars lighting the screen)
   const visible = new Set(view.visibleNodes);
-  const seenCombat = msg.events.combats.some((c) => {
-    if (c.location.kind === "node") return visible.has(c.location.nodeId);
-    return visible.has(c.location.from) || visible.has(c.location.to);
-  });
-  if (seenCombat) renderState.combatFlash = Math.min(1, renderState.combatFlash + 0.45);
+  const layout = match?.map.layout ?? {};
+  for (const c of msg.events.combats) {
+    let wx: number | null = null;
+    let wy: number | null = null;
+    let seen = false;
+    if (c.location.kind === "node") {
+      seen = visible.has(c.location.nodeId);
+      const p = layout[c.location.nodeId];
+      if (p) {
+        wx = p.x;
+        wy = p.y;
+      }
+    } else {
+      seen = visible.has(c.location.from) || visible.has(c.location.to);
+      const a = layout[c.location.from];
+      const b = layout[c.location.to];
+      if (a && b) {
+        wx = (a.x + b.x) / 2;
+        wy = (a.y + b.y) / 2;
+      }
+    }
+    if (seen) {
+      renderState.combatFlash = Math.min(1, renderState.combatFlash + 0.45);
+      if (wx !== null && wy !== null) {
+        renderState.combatBursts = renderState.combatBursts ?? [];
+        renderState.combatBursts.push({ x: wx, y: wy });
+      }
+    }
+  }
 
   for (const a of msg.events.annexations) {
     if (a.success && visible.has(a.nodeId)) {
@@ -714,6 +748,7 @@ function updateStrip(): void {
     : " · No fleet here";
 
   document.getElementById("strip-meta")!.innerHTML =
+    `<span class="role-swatch" style="background:${ROLE_FILL_CSS[role] ?? "#6b7585"}"></span>` +
     `<strong>${escapeHtml(roleLabel)}</strong> · L${level} · ${escapeHtml(ownerName)}` +
     popBit +
     claimBit +
