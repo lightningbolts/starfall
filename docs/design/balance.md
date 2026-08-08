@@ -82,7 +82,7 @@ Income uses a **1-second pulse** (every 10 ticks) so rates stay integer and read
 
 | Role | Credits / 10 ticks | Destination | Population / 10 ticks | Pop cap (L1) | Ship build slots | Notes |
 |---|---|---|---|---|---|---|
-| Homeworld | 1 | Bank (direct) | 1 | 20 | 0.5 equiv. | Fighters only at 2× build ticks |
+| Homeworld | 1 | Bank (direct) | 1 | 40 | 0.5 equiv. | Fighters only at 2× build ticks; cap must beat L1 shipyard garrison |
 | Core world | 1 | Bank (direct) | 3 | 40 | 0 | Primary pop |
 | Resource node | 4 | **Cargo stockpile** | 0 | 0 | 0 | Primary wealth via cargo ships |
 | Shipyard | 1 | Bank (direct) | 0 | 0 | 1 | Queue; levels = build speed only |

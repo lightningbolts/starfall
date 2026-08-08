@@ -164,12 +164,108 @@ export function generateGalaxy(opts: GalaxyGenOptions): GeneratedGalaxy {
     const g = tryGenerate(attemptSeed, players, nodeCount, rng);
     if (!g) continue;
     const v = validateGalaxy(g.map, g.homeworldIds, players);
-    if (v.ok) return { ...g, seed: opts.seed };
+    if (v.ok) {
+      ensureMapLayout(g.map, opts.seed);
+      return { ...g, seed: opts.seed };
+    }
   }
 
   // Fallback: relaxed generator that still meets hard constraints (connected, spacing, yards)
   const g = tryGenerateRelaxed(opts.seed, players, nodeCount);
+  ensureMapLayout(g.map, opts.seed);
   return { ...g, seed: opts.seed };
+}
+
+/**
+ * Force-directed layout so graph neighbors sit near each other.
+ * Always overwrites layout (needed when a prior pass stacked everything at origin).
+ */
+export function ensureMapLayout(map: GalaxyMap, seed = 1): void {
+  map.layout = computeForceLayout(map.nodes, seed);
+}
+
+function computeForceLayout(
+  nodes: Record<NodeId, GalaxyNode>,
+  seed: number,
+): Record<NodeId, { x: number; y: number }> {
+  const ids = Object.keys(nodes);
+  const n = ids.length;
+  if (n === 0) return {};
+
+  const rng = createRng(seed ^ 0x11f);
+  const pos: Record<NodeId, { x: number; y: number }> = {};
+  for (let i = 0; i < n; i++) {
+    const id = ids[i]!;
+    const angle = (2 * Math.PI * i) / n + rng() * 0.2;
+    const r = 0.8 + rng() * 0.4;
+    pos[id] = { x: Math.cos(angle) * r, y: Math.sin(angle) * r };
+  }
+
+  const ideal = Math.max(0.25, 2.2 / Math.sqrt(n));
+  const iterations = Math.min(120, 40 + n);
+  for (let iter = 0; iter < iterations; iter++) {
+    const force: Record<NodeId, { x: number; y: number }> = {};
+    for (const id of ids) force[id] = { x: 0, y: 0 };
+
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        const a = ids[i]!;
+        const b = ids[j]!;
+        const dx = pos[a]!.x - pos[b]!.x;
+        const dy = pos[a]!.y - pos[b]!.y;
+        const d2 = dx * dx + dy * dy + 0.02;
+        const f = 0.04 / d2;
+        force[a]!.x += dx * f;
+        force[a]!.y += dy * f;
+        force[b]!.x -= dx * f;
+        force[b]!.y -= dy * f;
+      }
+    }
+
+    for (const id of ids) {
+      for (const nb of nodes[id]!.neighbors) {
+        if (id >= nb) continue;
+        const dx = pos[nb]!.x - pos[id]!.x;
+        const dy = pos[nb]!.y - pos[id]!.y;
+        const d = Math.hypot(dx, dy) || 0.01;
+        const f = (d - ideal) * 0.1;
+        const fx = (dx / d) * f;
+        const fy = (dy / d) * f;
+        force[id]!.x += fx;
+        force[id]!.y += fy;
+        force[nb]!.x -= fx;
+        force[nb]!.y -= fy;
+      }
+    }
+
+    const cool = 1 - iter / iterations;
+    for (const id of ids) {
+      pos[id]!.x += force[id]!.x * cool;
+      pos[id]!.y += force[id]!.y * cool;
+    }
+  }
+
+  let cx = 0;
+  let cy = 0;
+  for (const id of ids) {
+    cx += pos[id]!.x;
+    cy += pos[id]!.y;
+  }
+  cx /= n;
+  cy /= n;
+  let maxR = 0.01;
+  for (const id of ids) {
+    pos[id]!.x -= cx;
+    pos[id]!.y -= cy;
+    maxR = Math.max(maxR, Math.hypot(pos[id]!.x, pos[id]!.y));
+  }
+  // Scale so typical maps span ~8–16 units (readable at zoom ~40–60)
+  const targetR = Math.max(5, Math.sqrt(n) * 1.6);
+  for (const id of ids) {
+    pos[id]!.x = (pos[id]!.x / maxR) * targetR;
+    pos[id]!.y = (pos[id]!.y / maxR) * targetR;
+  }
+  return pos;
 }
 
 function tryGenerate(
@@ -429,5 +525,13 @@ function tryGenerateRelaxed(
     n.neighbors.sort();
   }
 
-  return { map: { nodes }, homeworldIds, seed };
+  const layout: Record<NodeId, { x: number; y: number }> = {};
+  const idsLayout = Object.keys(nodes);
+  for (let i = 0; i < idsLayout.length; i++) {
+    const id = idsLayout[i]!;
+    const angle = (2 * Math.PI * i) / idsLayout.length;
+    layout[id] = { x: Math.cos(angle), y: Math.sin(angle) };
+  }
+
+  return { map: { nodes, layout }, homeworldIds, seed };
 }

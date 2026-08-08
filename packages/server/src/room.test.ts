@@ -169,4 +169,25 @@ describe("MatchRoom", () => {
     expect(room.capacity).toBe(100);
     room.stop();
   });
+
+  it("runs with bot seats against a human", () => {
+    const room = new MatchRoom({
+      seed: 42,
+      roundTicks: 30,
+      turnIntervalMs: 10_000,
+      capacity: 8,
+      botCount: 3,
+    });
+    expect(room.seatList().filter((s) => s.displayName.startsWith("Bot")).length).toBe(
+      3,
+    );
+    const inbox: ServerMessage[] = [];
+    expect(room.join("human", "You", (m) => inbox.push(m)).ok).toBe(true);
+    room.setReady("human", true);
+    expect(room.phase).toBe("running");
+    expect(inbox.some((m) => m.type === "MatchStart")).toBe(true);
+    room.tickOnceForTests();
+    expect(room.getTurnArchive().length).toBe(1);
+    room.stop();
+  });
 });

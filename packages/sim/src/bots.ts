@@ -5,9 +5,9 @@ import type {
   NodeId,
   PlayerId,
   StampedIntent,
-} from "@starfall/sim";
-import { fleetPower } from "@starfall/sim";
-import type { BalanceTable } from "@starfall/sim";
+} from "./types.js";
+import type { BalanceTable } from "./balance.js";
+import { fleetPower } from "./helpers.js";
 
 export type BotPolicy = "expand" | "garrison" | "attack";
 
@@ -22,7 +22,11 @@ function ownedFleets(state: GameState, playerId: PlayerId): Fleet[] {
   return Object.values(state.fleets).filter((f) => f.ownerId === playerId);
 }
 
-function nodeFleet(state: GameState, playerId: PlayerId, nodeId: NodeId): Fleet | undefined {
+function nodeFleet(
+  state: GameState,
+  playerId: PlayerId,
+  nodeId: NodeId,
+): Fleet | undefined {
   return ownedFleets(state, playerId).find(
     (f) => f.location.kind === "node" && f.location.nodeId === nodeId,
   );
@@ -72,8 +76,11 @@ function expandIntents(
     if (!neut) continue;
 
     const fromNode = state.nodes[here]!;
-    const popNeeded = 16; // > typical L1 resource garrison 15
-    if ((fleet.composition.fighter ?? 0) < 1 && fromNode.population < popNeeded) {
+    const popNeeded = 16;
+    if (
+      (fleet.composition.fighter ?? 0) < 1 &&
+      fromNode.population < popNeeded
+    ) {
       continue;
     }
 
@@ -96,10 +103,9 @@ function expandIntents(
         path: [here, neut],
       }),
     );
-    break; // one move per tick
+    break;
   }
 
-  // Build fighters if rich
   if (player.credits >= 30 && player.homeworldId) {
     out.push(
       stamp(brain, {
@@ -120,7 +126,9 @@ function garrisonIntents(state: GameState, brain: BotBrain): StampedIntent[] {
   const player = state.players[brain.playerId];
   if (!player) return out;
 
-  const owned = Object.values(state.nodes).filter((n) => n.ownerId === brain.playerId);
+  const owned = Object.values(state.nodes).filter(
+    (n) => n.ownerId === brain.playerId,
+  );
   const chokepoint = [...owned].sort(
     (a, b) => degree(state, b.id) - degree(state, a.id),
   )[0];
@@ -128,15 +136,17 @@ function garrisonIntents(state: GameState, brain: BotBrain): StampedIntent[] {
   for (const fleet of ownedFleets(state, brain.playerId)) {
     if (fleet.location.kind !== "node" || !chokepoint) continue;
     if (fleet.location.nodeId === chokepoint.id) continue;
-    // Path: BFS one hop at a time toward chokepoint
     const here = fleet.location.nodeId;
     const next = neighborsOf(state, here).find((n) => {
-      // Prefer moving closer — naive: any neighbor owned or toward
       return state.nodes[n]?.ownerId === brain.playerId || n === chokepoint.id;
     });
     if (next) {
       out.push(
-        stamp(brain, { type: "MoveFleet", fleetId: fleet.id, path: [here, next] }),
+        stamp(brain, {
+          type: "MoveFleet",
+          fleetId: fleet.id,
+          path: [here, next],
+        }),
       );
       break;
     }
@@ -169,7 +179,6 @@ function attackIntents(
   let bestScore = Infinity;
   for (const node of Object.values(state.nodes)) {
     if (!isEnemy(state, node.id, brain.playerId)) continue;
-    // Must be adjacent to something we own
     const adj = neighborsOf(state, node.id).some(
       (n) => state.nodes[n]?.ownerId === brain.playerId,
     );
@@ -217,7 +226,6 @@ function attackIntents(
     }
   }
 
-  // Also expand if idle
   if (out.length === 0) return expandIntents(state, brain, balance);
 
   if (player.credits >= 40 && player.homeworldId) {
@@ -247,4 +255,10 @@ export function botIntents(
     case "attack":
       return attackIntents(state, brain, balance);
   }
+}
+
+const POLICIES: BotPolicy[] = ["expand", "garrison", "attack"];
+
+export function policyForBotIndex(i: number): BotPolicy {
+  return POLICIES[i % POLICIES.length]!;
 }

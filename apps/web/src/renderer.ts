@@ -18,13 +18,14 @@ const ROLE_FILL: Record<string, string> = {
   relic: "#d4c07a",
 };
 
+/** World-space node radii (layout units). */
 const ROLE_RADIUS: Record<string, number> = {
-  homeworld: 14,
-  core_world: 12,
-  resource: 11,
-  shipyard: 12,
-  relay: 9,
-  relic: 13,
+  homeworld: 0.28,
+  core_world: 0.24,
+  resource: 0.22,
+  shipyard: 0.24,
+  relay: 0.18,
+  relic: 0.26,
 };
 
 export interface RenderState {
@@ -43,11 +44,15 @@ export class MapRenderer {
   private ctx: CanvasRenderingContext2D;
   camX = 0;
   camY = 0;
-  zoom = 40;
+  zoom = 48;
   private dragging = false;
   private lastX = 0;
   private lastY = 0;
+  private pointerMoved = false;
   private fleetLerp = new Map<FleetId, { x: number; y: number }>();
+  private layoutCache: Record<string, { x: number; y: number }> | null = null;
+  private lastHit: ((wx: number, wy: number) => NodeId | null) | null = null;
+  private stars: { x: number; y: number; r: number; a: number }[] = [];
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -60,22 +65,54 @@ export class MapRenderer {
 
   resize(): void {
     const dpr = window.devicePixelRatio || 1;
-    const w = this.canvas.clientWidth;
-    const h = this.canvas.clientHeight;
+    const w = Math.max(1, this.canvas.clientWidth || window.innerWidth);
+    const h = Math.max(1, this.canvas.clientHeight || window.innerHeight);
     this.canvas.width = Math.floor(w * dpr);
     this.canvas.height = Math.floor(h * dpr);
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this.rebuildStars(w, h);
+  }
+
+  private rebuildStars(w: number, h: number): void {
+    const out: { x: number; y: number; r: number; a: number }[] = [];
+    let s = 0x9e3779b9;
+    const rand = () => {
+      s ^= s << 13;
+      s ^= s >>> 17;
+      s ^= s << 5;
+      return (s >>> 0) / 0xffffffff;
+    };
+    const n = Math.floor((w * h) / 9000);
+    for (let i = 0; i < n; i++) {
+      out.push({
+        x: rand() * w,
+        y: rand() * h,
+        r: rand() < 0.15 ? 1.4 : 0.7,
+        a: 0.25 + rand() * 0.55,
+      });
+    }
+    this.stars = out;
   }
 
   bindPanZoom(onClick: (nodeId: NodeId | null, shift: boolean) => void): void {
-    this.canvas.addEventListener("wheel", (e) => {
-      e.preventDefault();
-      const factor = e.deltaY > 0 ? 0.92 : 1.08;
-      this.zoom = Math.min(120, Math.max(12, this.zoom * factor));
-    }, { passive: false });
+    this.canvas.addEventListener(
+      "wheel",
+      (e) => {
+        e.preventDefault();
+        const factor = e.deltaY > 0 ? 0.9 : 1.1;
+        const world = this.screenToWorld(e.clientX, e.clientY);
+        this.zoom = Math.min(140, Math.max(18, this.zoom * factor));
+        // Zoom toward cursor
+        const after = this.screenToWorld(e.clientX, e.clientY);
+        this.camX += (after.x - world.x) * this.zoom;
+        this.camY += (after.y - world.y) * this.zoom;
+      },
+      { passive: false },
+    );
 
     this.canvas.addEventListener("pointerdown", (e) => {
       this.dragging = true;
+      this.pointerMoved = false;
       this.lastX = e.clientX;
       this.lastY = e.clientY;
       this.canvas.classList.add("dragging");
@@ -85,32 +122,78 @@ export class MapRenderer {
       if (!this.dragging) return;
       const dx = e.clientX - this.lastX;
       const dy = e.clientY - this.lastY;
+      if (Math.hypot(dx, dy) > 3) this.pointerMoved = true;
       this.lastX = e.clientX;
       this.lastY = e.clientY;
       this.camX += dx;
       this.camY += dy;
     });
     this.canvas.addEventListener("pointerup", (e) => {
-      const moved =
-        Math.hypot(e.clientX - this.lastX, e.clientY - this.lastY) > 4;
       this.dragging = false;
       this.canvas.classList.remove("dragging");
-      if (moved) return;
+      if (this.pointerMoved) return;
       const world = this.screenToWorld(e.clientX, e.clientY);
       onClick(this.hitNode(world.x, world.y), e.shiftKey);
     });
   }
 
-  private layoutOf(id: NodeId, map: MatchStartMessage["map"]): { x: number; y: number } {
-    return map.layout?.[id] ?? { x: 0, y: 0 };
+  private layoutOf(
+    id: NodeId,
+    map: MatchStartMessage["map"],
+  ): { x: number; y: number } {
+    if (map.layout?.[id]) return map.layout[id]!;
+    if (!this.layoutCache) this.layoutCache = synthesizeLayout(map);
+    return this.layoutCache[id] ?? { x: 0, y: 0 };
   }
 
-  centerOn(map: MatchStartMessage["map"], nodeId: NodeId): void {
-    const p = this.layoutOf(nodeId, map);
-    const w = this.canvas.clientWidth;
-    const h = this.canvas.clientHeight;
-    this.camX = w / 2 - p.x * this.zoom;
-    this.camY = h / 2 - p.y * this.zoom;
+  setMap(map: MatchStartMessage["map"]): void {
+    this.layoutCache = null;
+    if (!map.layout || Object.keys(map.layout).length < 2) {
+      map.layout = synthesizeLayout(map);
+    }
+  }
+
+  /** Frame a set of node ids (visible neighborhood). */
+  fitNodes(map: MatchStartMessage["map"], nodeIds: NodeId[]): void {
+    const pts = nodeIds
+      .map((id) => this.layoutOf(id, map))
+      .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
+    if (pts.length === 0) {
+      this.fitMap(map);
+      return;
+    }
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const p of pts) {
+      minX = Math.min(minX, p.x);
+      minY = Math.min(minY, p.y);
+      maxX = Math.max(maxX, p.x);
+      maxY = Math.max(maxY, p.y);
+    }
+    // Pad so a single node still has room
+    const pad = 1.2;
+    minX -= pad;
+    minY -= pad;
+    maxX += pad;
+    maxY += pad;
+    const w = this.canvas.clientWidth || 800;
+    const h = this.canvas.clientHeight || 600;
+    const spanX = Math.max(maxX - minX, 0.5);
+    const spanY = Math.max(maxY - minY, 0.5);
+    this.zoom = Math.min(
+      90,
+      Math.max(28, Math.min((w * 0.75) / spanX, (h * 0.75) / spanY)),
+    );
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+    this.camX = w / 2 - cx * this.zoom;
+    this.camY = h / 2 - cy * this.zoom;
+  }
+
+  fitMap(map: MatchStartMessage["map"]): void {
+    this.fitNodes(map, Object.keys(map.nodes));
   }
 
   screenToWorld(sx: number, sy: number): { x: number; y: number } {
@@ -122,37 +205,59 @@ export class MapRenderer {
   }
 
   private hitNode(wx: number, wy: number): NodeId | null {
-    // set by last draw — use pending hit test via lastRender
     return this.lastHit?.(wx, wy) ?? null;
   }
 
-  private lastHit: ((wx: number, wy: number) => NodeId | null) | null = null;
-
-  private ownerColor(ownerId: PlayerId | null, selfId: PlayerId, colors: Record<PlayerId, string>): string {
+  private ownerColor(
+    ownerId: PlayerId | null,
+    selfId: PlayerId,
+    colors: Record<PlayerId, string>,
+  ): string {
     if (!ownerId) return "#6b7585";
     if (ownerId === selfId) return "#e8a838";
     return colors[ownerId] ?? "#6b7585";
   }
 
   private nodeRadius(role: string, level: number): number {
-    const base = ROLE_RADIUS[role] ?? 11;
+    const base = ROLE_RADIUS[role] ?? 0.22;
     return base * (1 + 0.04 * Math.min(Math.max(level - 1, 0), 12));
   }
 
   draw(state: RenderState, dt: number): void {
     const { ctx, canvas } = this;
-    const w = canvas.clientWidth;
-    const h = canvas.clientHeight;
+    const w = canvas.clientWidth || window.innerWidth;
+    const h = canvas.clientHeight || window.innerHeight;
     ctx.clearRect(0, 0, w, h);
 
-    // Starfield
     ctx.fillStyle = "#07090d";
     ctx.fillRect(0, 0, w, h);
-    const g = ctx.createRadialGradient(w * 0.5, h * 0.4, 0, w * 0.5, h * 0.4, w * 0.7);
-    g.addColorStop(0, "#1a223044");
+    const g = ctx.createRadialGradient(
+      w * 0.5,
+      h * 0.38,
+      0,
+      w * 0.5,
+      h * 0.38,
+      Math.max(w, h) * 0.65,
+    );
+    g.addColorStop(0, "#1a223055");
+    g.addColorStop(0.55, "#0c101822");
     g.addColorStop(1, "#07090d00");
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, w, h);
+
+    for (const star of this.stars) {
+      ctx.fillStyle = `rgba(220,230,245,${star.a})`;
+      ctx.beginPath();
+      ctx.arc(star.x, star.y, star.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Subtle combat flash in screen space (not a full white wipe)
+    if (state.combatFlash > 0) {
+      ctx.fillStyle = `rgba(245,242,234,${state.combatFlash * 0.08})`;
+      ctx.fillRect(0, 0, w, h);
+      state.combatFlash = Math.max(0, state.combatFlash - dt * 2.5);
+    }
 
     ctx.save();
     ctx.translate(this.camX, this.camY);
@@ -161,30 +266,46 @@ export class MapRenderer {
     const visible = new Set(state.view.visibleNodes);
     const nodes = state.view.nodes;
     const mapNodes = state.map.nodes;
+    const neighborSet = new Set<NodeId>();
+    if (state.selectedNode) {
+      for (const n of mapNodes[state.selectedNode]?.neighbors ?? []) {
+        neighborSet.add(n);
+      }
+    }
 
-    // Lanes
+    // Lanes between known nodes
     const drawn = new Set<string>();
     for (const gn of Object.values(mapNodes)) {
       for (const n of gn.neighbors) {
         const key = gn.id < n ? `${gn.id}:${n}` : `${n}:${gn.id}`;
         if (drawn.has(key)) continue;
         drawn.add(key);
+        if (nodes[gn.id] === undefined && nodes[n] === undefined) continue;
         const a = this.layoutOf(gn.id, state.map);
         const b = this.layoutOf(n, state.map);
-        const known =
-          nodes[gn.id] !== undefined || nodes[n] !== undefined;
-        if (!known) continue;
         const live = visible.has(gn.id) || visible.has(n);
+        const fromSel =
+          state.selectedNode === gn.id || state.selectedNode === n;
+        const toNeighbor =
+          (state.selectedNode === gn.id && neighborSet.has(n)) ||
+          (state.selectedNode === n && neighborSet.has(gn.id));
         ctx.beginPath();
         ctx.moveTo(a.x, a.y);
         ctx.lineTo(b.x, b.y);
-        ctx.strokeStyle = live ? "#3a4558" : "#151a22";
-        ctx.lineWidth = 0.04;
+        if (toNeighbor) {
+          ctx.strokeStyle = "#7a8aa0";
+          ctx.lineWidth = 0.07;
+        } else if (fromSel) {
+          ctx.strokeStyle = "#4a5568";
+          ctx.lineWidth = 0.05;
+        } else {
+          ctx.strokeStyle = live ? "#3a4558" : "#1a2230";
+          ctx.lineWidth = 0.04;
+        }
         ctx.stroke();
       }
     }
 
-    // Path preview
     if (state.pathPreview.length >= 2) {
       ctx.beginPath();
       for (let i = 0; i < state.pathPreview.length; i++) {
@@ -207,9 +328,9 @@ export class MapRenderer {
       const role = fogged ? vn.role : gn.role;
       const level = fogged ? vn.level : vn.level;
       const ownerId = fogged ? vn.ownerId : vn.ownerId;
-      const worldR = this.nodeRadius(role, level) / 40;
+      const worldR = this.nodeRadius(role, level);
 
-      hitCandidates.push({ id, x: pos.x, y: pos.y, r: worldR * 1.2 });
+      hitCandidates.push({ id, x: pos.x, y: pos.y, r: worldR * 1.45 });
 
       const fill = ROLE_FILL[role] ?? "#6b7585";
       ctx.beginPath();
@@ -221,18 +342,25 @@ export class MapRenderer {
 
       const ring = this.ownerColor(ownerId, state.selfId, state.seatColors);
       ctx.strokeStyle = ring;
-      ctx.lineWidth = 0.06;
+      ctx.lineWidth = ownerId === state.selfId ? 0.07 : 0.045;
       ctx.stroke();
+
+      if (neighborSet.has(id) && state.selectedNode !== id) {
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, worldR + 0.08, 0, Math.PI * 2);
+        ctx.strokeStyle = "rgba(240,208,128,0.55)";
+        ctx.lineWidth = 0.035;
+        ctx.stroke();
+      }
 
       const pulse = state.ownershipPulse.get(id) ?? 0;
       if (pulse > 0) {
         ctx.strokeStyle = `rgba(245,242,234,${pulse})`;
-        ctx.lineWidth = 0.1;
+        ctx.lineWidth = 0.08;
         ctx.stroke();
         state.ownershipPulse.set(id, Math.max(0, pulse - dt * 1.8));
       }
 
-      // Undefended high-value (owner-only): L≥3, no friendly fleet
       if (
         !fogged &&
         ownerId === state.selfId &&
@@ -241,9 +369,9 @@ export class MapRenderer {
       ) {
         const dangerPulse = 0.35 + 0.35 * Math.sin(performance.now() / 400);
         ctx.beginPath();
-        ctx.arc(pos.x, pos.y, worldR + 0.08, 0, Math.PI * 2);
+        ctx.arc(pos.x, pos.y, worldR + 0.06, 0, Math.PI * 2);
         ctx.strokeStyle = `rgba(196,92,74,${dangerPulse})`;
-        ctx.lineWidth = 0.07;
+        ctx.lineWidth = 0.05;
         ctx.stroke();
       }
 
@@ -255,17 +383,13 @@ export class MapRenderer {
         ctx.stroke();
       }
 
-      // Level numeral
       ctx.fillStyle = fogged ? "#9aa3b2" : "#e6eaf0";
-      ctx.font = `${Math.max(0.28, worldR * 0.85)}px "Source Sans 3", sans-serif`;
+      ctx.font = `600 ${Math.max(0.18, worldR * 0.85)}px "Source Sans 3", sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText(String(level), pos.x, pos.y + 0.02);
+      ctx.fillText(String(level), pos.x, pos.y + worldR * 0.08);
 
-      // Role mark (simple glyph)
-      ctx.font = `${worldR * 0.55}px "Source Sans 3", sans-serif`;
-      ctx.fillStyle = fogged ? "#6b7585" : "#e6eaf0";
-      ctx.fillText(roleGlyph(role), pos.x + worldR * 0.55, pos.y - worldR * 0.55);
+      drawRoleIcon(ctx, role, pos.x + worldR * 0.62, pos.y - worldR * 0.55, worldR * 0.38, fogged);
     }
 
     this.lastHit = (wx, wy) => {
@@ -281,7 +405,6 @@ export class MapRenderer {
       return best;
     };
 
-    // Fleets
     const fleetGroups = new Map<string, Fleet[]>();
     for (const f of Object.values(state.view.fleets)) {
       const key = fleetKey(f);
@@ -292,74 +415,154 @@ export class MapRenderer {
     for (const group of fleetGroups.values()) {
       group.forEach((f, i) => {
         const target = fleetWorldPos(f, state.map, this.layoutOf.bind(this));
-        const fan = (i - (group.length - 1) / 2) * 0.12;
+        const fan = (i - (group.length - 1) / 2) * 0.14;
         target.x += fan;
-        target.y += fan * 0.4;
+        target.y += fan * 0.45;
+        // Offset fleets slightly off the node center so the circle stays readable
+        if (f.location.kind === "node") {
+          target.y += 0.28;
+        }
         let cur = this.fleetLerp.get(f.id);
         if (!cur) {
           cur = { ...target };
           this.fleetLerp.set(f.id, cur);
-        } else {
-          const k = Math.min(1, dt * 8);
-          cur.x += (target.x - cur.x) * k;
-          cur.y += (target.y - cur.y) * k;
         }
-        const power =
-          (f.composition.fighter ?? 0) * 10 +
-          (f.composition.cruiser ?? 0) * 40 +
-          (f.composition.battleship ?? 0) * 120;
-        const size = 0.08 + Math.min(0.25, Math.sqrt(power) * 0.012);
+        cur.x += (target.x - cur.x) * Math.min(1, dt * 8);
+        cur.y += (target.y - cur.y) * Math.min(1, dt * 8);
+        const power = Object.entries(f.composition).reduce((sum, [t, n]) => {
+          const p =
+            t === "battleship" ? 120 : t === "cruiser" ? 40 : 10;
+          return sum + (n ?? 0) * p;
+        }, 0);
+        const size = Math.min(0.2, 0.08 + Math.sqrt(Math.max(power, 1)) * 0.012);
         ctx.beginPath();
         ctx.moveTo(cur.x, cur.y - size);
-        ctx.lineTo(cur.x + size * 0.7, cur.y + size * 0.6);
-        ctx.lineTo(cur.x - size * 0.7, cur.y + size * 0.6);
+        ctx.lineTo(cur.x + size * 0.9, cur.y + size * 0.75);
+        ctx.lineTo(cur.x - size * 0.9, cur.y + size * 0.75);
         ctx.closePath();
         ctx.fillStyle = this.ownerColor(f.ownerId, state.selfId, state.seatColors);
         ctx.fill();
+        ctx.strokeStyle = "rgba(7,9,13,0.55)";
+        ctx.lineWidth = 0.02;
+        ctx.stroke();
         if (f.invasionPopulation) {
           ctx.beginPath();
-          ctx.arc(cur.x + size, cur.y - size, 0.06, 0, Math.PI * 2);
+          ctx.arc(cur.x + size * 0.95, cur.y - size * 0.7, 0.055, 0, Math.PI * 2);
           ctx.fillStyle = "#e8a838";
           ctx.fill();
+        }
+        if (power > 0 && this.zoom >= 32) {
+          ctx.fillStyle = "#e6eaf0";
+          ctx.font = `600 ${Math.max(0.12, size * 0.95)}px "Source Sans 3", sans-serif`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "top";
+          ctx.fillText(String(power), cur.x, cur.y + size * 0.85);
         }
       });
     }
 
-    // Cargo
     for (const c of Object.values(state.view.cargoShips)) {
       const p = fleetWorldPos(c, state.map, this.layoutOf.bind(this));
-      const s = 0.1;
+      const s = 0.09;
       ctx.fillStyle = "#7aafc4";
-      ctx.fillRect(p.x - s, p.y - s * 0.6, s * 2, s * 1.2);
-    }
-
-    if (state.combatFlash > 0) {
-      ctx.fillStyle = `rgba(245,242,234,${state.combatFlash * 0.25})`;
-      ctx.fillRect(-100, -100, 200, 200);
-      state.combatFlash = Math.max(0, state.combatFlash - dt * 4);
+      ctx.fillRect(p.x - s, p.y - s * 0.55, s * 2, s * 1.1);
+      ctx.strokeStyle = "rgba(7,9,13,0.45)";
+      ctx.lineWidth = 0.02;
+      ctx.strokeRect(p.x - s, p.y - s * 0.55, s * 2, s * 1.1);
     }
 
     ctx.restore();
   }
 }
 
-function roleGlyph(role: string): string {
+function drawRoleIcon(
+  ctx: CanvasRenderingContext2D,
+  role: string,
+  x: number,
+  y: number,
+  r: number,
+  fogged: boolean,
+): void {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.strokeStyle = fogged ? "#6b7585" : "#e6eaf0";
+  ctx.fillStyle = fogged ? "#6b7585" : "#e6eaf0";
+  ctx.lineWidth = Math.max(0.025, r * 0.18);
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
   switch (role) {
-    case "homeworld":
-      return "⌂";
-    case "core_world":
-      return "◎";
-    case "resource":
-      return "◈";
-    case "shipyard":
-      return "⚒";
-    case "relay":
-      return "⌁";
-    case "relic":
-      return "✧";
+    case "homeworld": {
+      ctx.beginPath();
+      ctx.moveTo(-r * 0.7, 0);
+      ctx.lineTo(0, -r * 0.75);
+      ctx.lineTo(r * 0.7, 0);
+      ctx.lineTo(r * 0.7, r * 0.65);
+      ctx.lineTo(-r * 0.7, r * 0.65);
+      ctx.closePath();
+      ctx.stroke();
+      break;
+    }
+    case "core_world": {
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.55, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.2, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
+    case "resource": {
+      ctx.beginPath();
+      ctx.moveTo(0, -r * 0.75);
+      ctx.lineTo(r * 0.65, 0);
+      ctx.lineTo(0, r * 0.75);
+      ctx.lineTo(-r * 0.65, 0);
+      ctx.closePath();
+      ctx.stroke();
+      break;
+    }
+    case "shipyard": {
+      ctx.beginPath();
+      ctx.moveTo(-r * 0.55, -r * 0.55);
+      ctx.lineTo(r * 0.55, r * 0.55);
+      ctx.moveTo(r * 0.55, -r * 0.55);
+      ctx.lineTo(-r * 0.55, r * 0.55);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.28, 0, Math.PI * 2);
+      ctx.stroke();
+      break;
+    }
+    case "relay": {
+      ctx.beginPath();
+      ctx.moveTo(0, r * 0.7);
+      ctx.lineTo(0, -r * 0.15);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(0, -r * 0.35, r * 0.35, Math.PI * 0.15, Math.PI * 0.85, true);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(0, -r * 0.35, r * 0.6, Math.PI * 0.25, Math.PI * 0.75, true);
+      ctx.stroke();
+      break;
+    }
+    case "relic": {
+      for (let i = 0; i < 4; i++) {
+        const a = (i * Math.PI) / 2 - Math.PI / 2;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(Math.cos(a) * r * 0.75, Math.sin(a) * r * 0.75);
+        ctx.stroke();
+      }
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.18, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
     default:
-      return "·";
+      break;
   }
+  ctx.restore();
 }
 
 function fleetKey(f: Fleet): string {
@@ -382,7 +585,10 @@ function hasFriendlyFleetAt(
 function fleetWorldPos(
   f: { location: Fleet["location"] },
   map: MatchStartMessage["map"],
-  layoutOf: (id: NodeId, map: MatchStartMessage["map"]) => { x: number; y: number },
+  layoutOf: (
+    id: NodeId,
+    map: MatchStartMessage["map"],
+  ) => { x: number; y: number },
 ): { x: number; y: number } {
   if (f.location.kind === "node") {
     return { ...layoutOf(f.location.nodeId, map) };
@@ -392,4 +598,19 @@ function fleetWorldPos(
   const total = Math.max(1, f.location.hopTotalTicks);
   const t = 1 - f.location.ticksRemaining / total;
   return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+}
+
+/** Spread nodes on a large ring — never stack at origin. */
+function synthesizeLayout(
+  map: MatchStartMessage["map"],
+): Record<string, { x: number; y: number }> {
+  const ids = Object.keys(map.nodes).sort();
+  const n = Math.max(ids.length, 1);
+  const radius = Math.max(4, Math.sqrt(n) * 1.8);
+  const out: Record<string, { x: number; y: number }> = {};
+  for (let i = 0; i < ids.length; i++) {
+    const angle = (2 * Math.PI * i) / n;
+    out[ids[i]!] = { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius };
+  }
+  return out;
 }

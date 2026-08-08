@@ -13,6 +13,7 @@ const seed = arg("seed") ? Number(arg("seed")) : undefined;
 const ticksRaw = arg("ticks");
 const ticks = ticksRaw !== undefined ? Number(ticksRaw) : 0;
 const players = arg("players") ? Number(arg("players")) : undefined;
+const bots = arg("bots") ? Number(arg("bots")) : 0;
 const staticDir = arg("static");
 const telemetry = arg("telemetry");
 
@@ -21,6 +22,7 @@ const srv = startServer({
   seed,
   roundTicks: ticks,
   capacity: players ?? 100,
+  botCount: bots,
   ...(staticDir ? { staticDir } : {}),
   ...(telemetry ? { telemetryPath: telemetry } : {}),
 });
@@ -30,6 +32,7 @@ console.log(`Starfall server listening on http://localhost:${bound}`);
 console.log(`WebSocket: ws://localhost:${bound}/ws`);
 console.log(`Metrics: http://localhost:${bound}/metrics`);
 console.log(`Capacity: ${srv.room.capacity}`);
+if (bots > 0) console.log(`Bots: ${srv.room.botCount}`);
 if (seed != null) console.log(`Seed: ${seed}`);
 if (ticks > 0) {
   console.log(`Round ticks: ${ticks} (timed score finish)`);

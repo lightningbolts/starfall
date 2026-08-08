@@ -14,7 +14,7 @@ npm exec --yes pnpm@9.15.0 test
 
 ### Local multiplayer
 
-One command (server + web):
+One command (server + 7 bots + web):
 
 ```bash
 npm exec --yes pnpm@9.15.0 run dev
@@ -23,12 +23,14 @@ npm exec --yes pnpm@9.15.0 run dev
 Or two terminals:
 
 ```bash
-# Terminal 1 — game server (must stay running)
-npm exec --yes pnpm@9.15.0 run server -- --seed 42 --players 8
+# Terminal 1 — game server with bots (must stay running)
+npm exec --yes pnpm@9.15.0 run server -- --seed 42 --players 8 --bots 7
 
 # Terminal 2 — Vite (proxies /ws → :8787)
 npm exec --yes pnpm@9.15.0 run web
 ```
+
+Open http://localhost:5173, Join, Ready — match starts against the bots (last player standing).
 
 Open two browser tabs to `http://localhost:5173`, join with different names, Ready both (or host Start).
 

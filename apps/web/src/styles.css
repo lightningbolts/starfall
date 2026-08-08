@@ -186,12 +186,31 @@ input {
   left: 0.75rem;
   z-index: 6;
   pointer-events: auto;
-  width: min(14rem, 42vw);
+  width: min(12rem, 38vw);
   background: var(--sf-hud-bg);
   border: 1px solid var(--sf-hud-border);
   padding: 0.5rem 0.65rem;
   border-radius: 2px;
   font-size: 0.8rem;
+  color: var(--sf-text-dim);
+}
+
+.hud-ranks {
+  position: absolute;
+  top: 3.5rem;
+  right: 0.75rem;
+  bottom: auto;
+  left: auto;
+  z-index: 5;
+  pointer-events: auto;
+  width: min(11rem, 32vw);
+  max-height: 32vh;
+  overflow-y: auto;
+  background: var(--sf-hud-bg);
+  border: 1px solid var(--sf-hud-border);
+  padding: 0.4rem 0.55rem;
+  border-radius: 2px;
+  font-size: 0.75rem;
   color: var(--sf-text-dim);
 }
 
@@ -222,25 +241,6 @@ input {
   min-height: 28px;
   padding: 0 0.5rem;
   font-size: 0.75rem;
-}
-
-.hud-ranks {
-  position: absolute;
-  top: auto;
-  bottom: 5.5rem;
-  left: 0.75rem;
-  right: auto;
-  z-index: 5;
-  pointer-events: auto;
-  width: min(12rem, 36vw);
-  max-height: 28vh;
-  overflow-y: auto;
-  background: var(--sf-hud-bg);
-  border: 1px solid var(--sf-hud-border);
-  padding: 0.4rem 0.55rem;
-  border-radius: 2px;
-  font-size: 0.75rem;
-  color: var(--sf-text-dim);
 }
 
 .hud-ranks button {
@@ -377,6 +377,41 @@ input {
   flex: 0 0 auto;
   padding: 0 0.85rem;
   font-size: 0.9rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.hud-btn .cost,
+.tech-cell .cost {
+  font-variant-numeric: tabular-nums;
+  color: var(--sf-self);
+  font-weight: 700;
+}
+
+.hud-btn .cost::after {
+  content: "¢";
+  font-weight: 600;
+  margin-left: 0.05em;
+  opacity: 0.85;
+}
+
+.tech-cell .cost::after {
+  content: "¢";
+  margin-left: 0.05em;
+}
+
+.hud-btn.unaffordable .cost,
+.tech-cell.unaffordable .cost {
+  color: var(--sf-danger);
+}
+
+.tech-cell.locked {
+  opacity: 0.4;
+}
+
+.tech-cell.unaffordable:not(.owned):not(.locked) {
+  opacity: 0.7;
 }
 
 .tech-toggle {
@@ -389,15 +424,96 @@ input {
   padding: 0 0.85rem;
 }
 
+.help-toggle {
+  position: absolute;
+  top: 0.75rem;
+  right: 13.5rem;
+  z-index: 6;
+  pointer-events: auto;
+  min-height: 44px;
+  padding: 0 0.85rem;
+}
+
+.hud-tip {
+  position: absolute;
+  top: 3.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  max-width: min(36rem, 90vw);
+  padding: 0.45rem 0.85rem;
+  background: var(--sf-hud-bg);
+  border: 1px solid var(--sf-hud-border);
+  border-radius: 2px;
+  color: var(--sf-text-dim);
+  font-size: 0.9rem;
+  text-align: center;
+  pointer-events: none;
+}
+
+.hud-help {
+  position: absolute;
+  top: 3.5rem;
+  right: 0.75rem;
+  z-index: 8;
+  width: min(22rem, 92vw);
+  background: var(--sf-hud-bg);
+  border: 1px solid var(--sf-hud-border);
+  padding: 0.85rem 1rem;
+  border-radius: 2px;
+  pointer-events: auto;
+  color: var(--sf-text-dim);
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.hud-help h2 {
+  margin: 0 0 0.5rem;
+  font-family: var(--sf-font-display);
+  font-size: 1.05rem;
+  color: var(--sf-text);
+}
+
+.hud-help ol {
+  margin: 0 0 0.75rem;
+  padding-left: 1.2rem;
+}
+
+.hud-help li {
+  margin-bottom: 0.45rem;
+}
+
+.hud-help .help-sub {
+  margin: 0.35rem 0 0.15rem;
+  padding-left: 1.1rem;
+  list-style: lower-alpha;
+}
+
+.hud-help .help-note {
+  margin: 0 0 0.75rem;
+  font-size: 0.85rem;
+}
+
+.strip-hint {
+  flex: 1 1 100%;
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--sf-text-dim);
+  line-height: 1.35;
+}
+
 .hud-tech {
   top: 3.5rem;
   right: 0.75rem;
   width: min(18rem, 90vw);
+  max-height: calc(100vh - 8rem);
+  overflow-y: auto;
   background: var(--sf-hud-bg);
   border: 1px solid var(--sf-hud-border);
   padding: 0.75rem;
   border-radius: 2px;
   pointer-events: auto;
+  z-index: 9;
 }
 
 .hud-tech h2 {

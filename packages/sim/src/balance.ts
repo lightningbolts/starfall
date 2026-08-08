@@ -104,7 +104,8 @@ export const DEFAULT_BALANCE: BalanceTable = {
     homeworld: {
       creditsPerPulse: 1,
       populationPerPulse: 1,
-      populationCap: 20,
+      // Must exceed L1 shipyard garrison (25) so the opening claim is possible
+      populationCap: 40,
       garrisonBase: 40,
       garrisonPerLevel: 12,
       upgradeBaseCost: 50,

@@ -1,5 +1,6 @@
 import {
   accumulateTelemetry,
+  botIntents,
   buildPlayerView,
   computeScores,
   createMatch,
@@ -10,6 +11,8 @@ import {
   diffPlayerView,
   emptyTurn,
   executeNextTick,
+  policyForBotIndex,
+  type BotBrain,
   type ClientId,
   type Game,
   type GameState,
@@ -34,6 +37,7 @@ export interface SeatRuntime {
   displayName: string;
   ready: boolean;
   connected: boolean;
+  isBot: boolean;
   /** Wall-clock ms when last disconnected; null if connected. */
   disconnectedAt: number | null;
   playerId: PlayerId | null;
@@ -56,6 +60,8 @@ export interface MatchRoomOptions {
   fullSnapshotEvery?: number;
   /** Optional JSONL path for per-tick telemetry. */
   telemetryPath?: string;
+  /** Seat this many AI opponents in the lobby (ready immediately). */
+  botCount?: number;
 }
 
 const DEFAULTS = {
@@ -65,6 +71,7 @@ const DEFAULTS = {
   turnIntervalMs: 100,
   maxIntentsPerTurn: 8,
   fullSnapshotEvery: 50,
+  botCount: 0,
 };
 
 export class MatchRoom {
@@ -95,6 +102,8 @@ export class MatchRoom {
   private prevEliminated = 0;
   private mapPayload: MatchStartMessageMap | null = null;
   private playersMeta: MatchStartPlayers | null = null;
+  private bots: BotBrain[] = [];
+  readonly botCount: number;
 
   constructor(opts: MatchRoomOptions = {}) {
     this.capacity = opts.capacity ?? DEFAULTS.capacity;
@@ -106,12 +115,34 @@ export class MatchRoom {
     this.fullSnapshotEvery =
       opts.fullSnapshotEvery ?? DEFAULTS.fullSnapshotEvery;
     this.telemetryPath = opts.telemetryPath ?? null;
+    this.botCount = Math.max(0, opts.botCount ?? DEFAULTS.botCount);
     this.seed = opts.seed ?? Math.floor(Math.random() * 1e9);
     // 0 = unlimited (last player standing). Pass --ticks N for a timed score finish.
     this.roundTicks = opts.roundTicks ?? 0;
     this.config = createSimConfig(DEFAULT_BALANCE, {
       roundTicks: this.roundTicks,
     });
+    if (this.botCount > 0) this.seedBots(this.botCount);
+  }
+
+  /** Fill lobby with ready AI seats (host remains first human). */
+  private seedBots(count: number): void {
+    const n = Math.min(count, Math.max(0, this.capacity - 1));
+    for (let i = 0; i < n; i++) {
+      const clientId = `bot-${i}`;
+      this.seats.set(clientId, {
+        clientId,
+        displayName: `Bot ${i + 1}`,
+        ready: true,
+        connected: true,
+        isBot: true,
+        disconnectedAt: null,
+        playerId: null,
+        send: () => undefined,
+        intentsThisTurn: 0,
+        rateLimitWarned: false,
+      });
+    }
   }
 
   getSeat(clientId: ClientId): SeatRuntime | undefined {
@@ -128,18 +159,21 @@ export class MatchRoom {
 
   seatList(): LobbySeat[] {
     const list = [...this.seats.values()];
-    return list.map((s, i) => ({
+    const hostId = this.hostClientId();
+    return list.map((s) => ({
       clientId: s.clientId,
       displayName: s.displayName,
       ready: s.ready,
       connected: s.connected,
-      host: i === 0,
+      host: s.clientId === hostId,
     }));
   }
 
   private hostClientId(): ClientId | null {
-    const first = this.seats.values().next().value as SeatRuntime | undefined;
-    return first?.clientId ?? null;
+    for (const s of this.seats.values()) {
+      if (!s.isBot) return s.clientId;
+    }
+    return null;
   }
 
   private broadcast(msg: ServerMessage, except?: ClientId): void {
@@ -218,6 +252,7 @@ export class MatchRoom {
       displayName,
       ready: false,
       connected: true,
+      isBot: false,
       disconnectedAt: null,
       playerId: null,
       send,
@@ -283,12 +318,14 @@ export class MatchRoom {
 
   setReady(clientId: ClientId, ready: boolean): void {
     const seat = this.seats.get(clientId);
-    if (!seat || this.phase !== "lobby") return;
+    if (!seat || seat.isBot || this.phase !== "lobby") return;
     seat.ready = ready;
     this.lobbyUpdate();
+    const humans = [...this.seats.values()].filter((s) => !s.isBot);
     if (
+      humans.length >= 1 &&
       this.seats.size >= 2 &&
-      [...this.seats.values()].every((s) => s.ready)
+      humans.every((s) => s.ready)
     ) {
       const host = this.hostClientId();
       if (host) this.startMatch(host);
@@ -356,6 +393,18 @@ export class MatchRoom {
       if (pid) this.memories.set(pid, createVisionMemory());
     }
 
+    this.bots = [];
+    for (const s of this.seats.values()) {
+      if (!s.isBot || !s.playerId) continue;
+      const idx = Number(s.clientId.replace(/^bot-/, "")) || 0;
+      this.bots.push({
+        playerId: s.playerId,
+        clientId: s.clientId,
+        policy: policyForBotIndex(idx),
+        seq: 0,
+      });
+    }
+
     computeScores(this.game);
 
     this.mapPayload = {
@@ -365,10 +414,19 @@ export class MatchRoom {
           { id: n.id, role: n.role, neighbors: [...n.neighbors] },
         ]),
       ),
-      layout: this.state.map.layout
-        ? { ...this.state.map.layout }
-        : undefined,
+      layout: { ...(this.state.map.layout ?? {}) },
     };
+    if (Object.keys(this.mapPayload.layout).length < 2) {
+      // Should never happen after ensureMapLayout — keep payload valid
+      const ids = Object.keys(this.mapPayload.nodes);
+      this.mapPayload.layout = Object.fromEntries(
+        ids.map((id, i) => {
+          const a = (2 * Math.PI * i) / Math.max(ids.length, 1);
+          const r = Math.max(5, Math.sqrt(ids.length) * 1.6);
+          return [id, { x: Math.cos(a) * r, y: Math.sin(a) * r }];
+        }),
+      );
+    }
 
     this.playersMeta = Object.fromEntries(
       Object.values(this.state.players).map((p) => [
@@ -382,7 +440,7 @@ export class MatchRoom {
     );
 
     for (const s of this.seats.values()) {
-      if (!s.playerId || !s.connected) continue;
+      if (!s.playerId || !s.connected || s.isBot) continue;
       const memory = this.memories.get(s.playerId)!;
       const view = buildPlayerView(
         this.state,
@@ -430,7 +488,7 @@ export class MatchRoom {
 
   onDisconnect(clientId: ClientId): void {
     const seat = this.seats.get(clientId);
-    if (!seat) return;
+    if (!seat || seat.isBot) return;
     seat.connected = false;
     seat.disconnectedAt = Date.now();
     if (this.phase === "lobby") {
@@ -472,6 +530,12 @@ export class MatchRoom {
     for (const s of this.seats.values()) {
       s.intentsThisTurn = 0;
       s.rateLimitWarned = false;
+    }
+
+    // AI intents for this turn (before human buffer drain)
+    for (const brain of this.bots) {
+      const intents = botIntents(this.state, brain, this.config.balance);
+      for (const intent of intents) this.intentBuffer.push(intent);
     }
 
     const intents = this.intentBuffer;
@@ -531,7 +595,7 @@ export class MatchRoom {
     this.broadcast({ type: "Turn", turn });
 
     for (const s of this.seats.values()) {
-      if (!s.playerId || !s.connected) continue;
+      if (!s.playerId || !s.connected || s.isBot) continue;
       const memory = this.memories.get(s.playerId);
       if (!memory) continue;
       const view = buildPlayerView(
@@ -599,7 +663,7 @@ export class MatchRoom {
 
 type MatchStartMessageMap = {
   nodes: Record<string, { id: string; role: string; neighbors: string[] }>;
-  layout?: Record<string, { x: number; y: number }>;
+  layout: Record<string, { x: number; y: number }>;
 };
 
 type MatchStartPlayers = Record<

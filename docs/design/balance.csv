@@ -50,7 +50,7 @@ ship.battleship,ticks_per_hop,80,ticks,8.0s per hop
 ship.battleship,requires_tech,heavy_warships,tech_id,
 role.homeworld,credits_per_pulse,1,credits,every 10 ticks
 role.homeworld,population_per_pulse,1,population,every 10 ticks
-role.homeworld,population_cap,20,population,level 1
+role.homeworld,population_cap,40,population,level 1 — must exceed L1 shipyard garrison (25)
 role.homeworld,garrison_base,40,population,level 1
 role.homeworld,garrison_per_level,12,population,added per level above 1
 role.homeworld,upgrade_base_cost,50,credits,cost to reach level 2

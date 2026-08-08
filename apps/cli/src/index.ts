@@ -1,14 +1,16 @@
 #!/usr/bin/env node
 import {
-  accumulateTelemetry,
   createMatch,
   createMatchTelemetry,
   createSimConfig,
   executeNextTick,
   formatTelemetrySummary,
+  accumulateTelemetry,
+  botIntents,
+  policyForBotIndex,
+  type BotBrain,
   type Turn,
 } from "@starfall/sim";
-import { botIntents, type BotBrain, type BotPolicy } from "./bots.js";
 
 function parseArgs(argv: string[]) {
   const args: {
@@ -36,11 +38,6 @@ function parseArgs(argv: string[]) {
   return args;
 }
 
-function policiesFor(n: number): BotPolicy[] {
-  const cycle: BotPolicy[] = ["expand", "garrison", "attack"];
-  return Array.from({ length: n }, (_, i) => cycle[i % cycle.length]!);
-}
-
 function runFfa() {
   const args = parseArgs(process.argv.slice(2));
   const config = createSimConfig(undefined, { roundTicks: args.ticks });
@@ -51,10 +48,10 @@ function runFfa() {
     config,
   });
 
-  const brains: BotBrain[] = policiesFor(args.players).map((policy, i) => ({
+  const brains: BotBrain[] = Array.from({ length: args.players }, (_, i) => ({
     playerId: `p${i}`,
     clientId: `c${i}`,
-    policy,
+    policy: policyForBotIndex(i),
     seq: 0,
   }));
 

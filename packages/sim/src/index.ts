@@ -72,6 +72,7 @@ export {
 export {
   generateGalaxy,
   validateGalaxy,
+  ensureMapLayout,
   type GalaxyGenOptions,
   type GeneratedGalaxy,
 } from "./galaxy.js";
@@ -120,3 +121,9 @@ export {
   formatTelemetrySummary,
   type MatchTelemetry,
 } from "./telemetry.js";
+export {
+  botIntents,
+  policyForBotIndex,
+  type BotBrain,
+  type BotPolicy,
+} from "./bots.js";
