@@ -31,8 +31,24 @@ import {
 } from "@starfall/sim";
 import { NetClient, loadStoredClientId, storeClientId } from "./net.js";
 import { MapRenderer, type RenderState } from "./renderer.js";
+import {
+  readChronicleHash,
+  startChronicle,
+  writeChronicleHash,
+} from "./macro/chronicle.js";
 
 const BAL = DEFAULT_BALANCE;
+
+/** Client-only macro spectator — skip competitive lobby entirely. */
+const chronicleBoot = readChronicleHash();
+if (chronicleBoot) {
+  const appRoot = document.getElementById("app")!;
+  startChronicle(appRoot, chronicleBoot);
+} else {
+  bootCompetitive();
+}
+
+function bootCompetitive(): void {
 
 const ROLE_FILL_CSS: Record<string, string> = {
   homeworld: "#4a6fa5",
@@ -101,6 +117,17 @@ app.innerHTML = `
               <option value="6">6</option>
               <option value="8" selected>8</option>
               <option value="12">12</option>
+            </select>
+          </label>
+        </div>
+        <button type="button" class="btn" id="chronicle-btn">Chronicle</button>
+        <div class="lobby-watch-opts" id="chronicle-opts">
+          <label class="field field-inline">
+            <span>Galaxy</span>
+            <select id="chronicle-map-size">
+              <option value="small">Small (400)</option>
+              <option value="medium" selected>Medium (1000)</option>
+              <option value="large">Large (2500)</option>
             </select>
           </label>
         </div>
@@ -275,6 +302,7 @@ const readyBtn = $<HTMLButtonElement>("ready-btn");
 const startBtn = $<HTMLButtonElement>("start-btn");
 const soloBtn = $<HTMLButtonElement>("solo-btn");
 const watchBtn = $<HTMLButtonElement>("watch-btn");
+const chronicleBtn = $<HTMLButtonElement>("chronicle-btn");
 const nameInput = $<HTMLInputElement>("name");
 const splitInput = $<HTMLInputElement>("split");
 const canvas = $<HTMLCanvasElement>("map");
@@ -391,6 +419,7 @@ soloBtn.addEventListener("click", () => {
   watchRequested = false;
   soloBtn.disabled = true;
   watchBtn.disabled = true;
+  chronicleBtn.disabled = true;
   soloBtn.textContent = "Launching…";
   if (joined) {
     net.startMatch(7);
@@ -406,12 +435,22 @@ watchBtn.addEventListener("click", () => {
   soloRequested = false;
   watchBtn.disabled = true;
   soloBtn.disabled = true;
+  chronicleBtn.disabled = true;
   watchBtn.textContent = "Launching…";
   if (joined) {
     startWatchMatch();
   } else {
     connectAndHello(name);
   }
+});
+
+chronicleBtn.addEventListener("click", () => {
+  const mapSize = $<HTMLSelectElement>("chronicle-map-size").value as
+    | "small"
+    | "medium"
+    | "large";
+  writeChronicleHash({ mapSize });
+  startChronicle(app, { mapSize });
 });
 
 readyBtn.addEventListener("click", () => {
@@ -846,6 +885,7 @@ function handleServer(msg: ServerMessage): void {
       soloBtn.textContent = "Play vs AI";
       watchBtn.disabled = false;
       watchBtn.textContent = "Watch bots";
+      chronicleBtn.disabled = false;
       break;
     default:
       break;
@@ -1829,3 +1869,4 @@ function frame(now: number): void {
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
+}

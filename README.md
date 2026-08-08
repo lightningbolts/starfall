@@ -32,6 +32,8 @@ npm exec --yes pnpm@9.15.0 run web
 
 Open http://localhost:5173, Join, Ready — match starts against the bots (last player standing).
 
+**Chronicle** (macro spectator): lobby **Chronicle** button, or open `http://localhost:5173/#/chronicle?size=medium` — client-only region sim with Three.js map (no server required for that mode).
+
 Each match rolls a **random seed** (new galaxy). Pass `--seed N` only when you want a fixed, reproducible map.
 
 Open two browser tabs to `http://localhost:5173`, join with different names, Ready both (or host Start).

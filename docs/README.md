@@ -15,7 +15,9 @@ Design package for a graph-based space territory conquest game (TypeScript multi
 | [design/domain.md](./design/domain.md) | TypeScript domain contracts |
 | [adr/001-tick-engine.md](./adr/001-tick-engine.md) | OpenFront-style tick / intent / execution |
 | [adr/002-multiplayer-architecture.md](./adr/002-multiplayer-architecture.md) | Lockstep turns + authoritative sim |
-| [roadmap.md](./roadmap.md) | Phased path to FFA skeleton |
+| [design/macro-spectator.md](./design/macro-spectator.md) | Macro Chronicle (region spectator mode) |
+| [adr/003-macro-tick-split.md](./adr/003-macro-tick-split.md) | Logic tick vs render interpolation |
+| [roadmap.md](./roadmap.md) | Phased path to FFA skeleton + Phase M |
 
 ## Pinned v1 decisions (summary)
 

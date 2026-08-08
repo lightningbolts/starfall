@@ -10,7 +10,7 @@
   "packageManager": "pnpm@9.15.0",
   "scripts": {
     "build": "pnpm -r run build",
-    "test": "pnpm --filter @starfall/sim test && pnpm --filter @starfall/server test",
+    "test": "pnpm --filter @starfall/sim test && pnpm --filter @starfall/macro-sim test && pnpm --filter @starfall/server test",
     "sim:ffa": "pnpm --filter @starfall/cli start",
     "server": "pnpm --filter @starfall/server exec tsx src/index.ts",
     "web": "pnpm --filter @starfall/web exec vite",

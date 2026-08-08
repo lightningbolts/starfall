@@ -55,3 +55,13 @@ Phase 1 exit met: `pnpm sim:ffa -- --seed 42 --players 8 --ticks 12000` prints a
 Phase 2 exit: `pnpm server` + `pnpm web` — two browsers can join, play, and finish a short round.  
 Phase 3 exit: `pnpm load` (50 seats) + fogged deltas; capacity default 100.  
 Phase 4: `GET /metrics`, CLI telemetry summary, undefended L≥3 owner pulse.
+
+---
+
+## Phase M — Macro chronicle
+
+Separate client-only spectator mode (region aggregates, slow logic ticks, Three.js map). See [design/macro-spectator.md](./design/macro-spectator.md) and [adr/003-macro-tick-split.md](./adr/003-macro-tick-split.md).
+
+- [x] `@starfall/macro-sim` — regions, archetypes, events, contested fronts, interpolate
+- [x] `apps/web` Chronicle — Three.js map + toggleable dashboard + lobby entry (`#/chronicle`)
+- [ ] Playtest open params (tick interval, variance, region tiers)

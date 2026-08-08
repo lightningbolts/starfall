@@ -11,9 +11,12 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@starfall/sim": "workspace:*"
+    "@starfall/macro-sim": "workspace:^",
+    "@starfall/sim": "workspace:*",
+    "three": "^0.185.1"
   },
   "devDependencies": {
+    "@types/three": "^0.185.4",
     "typescript": "^5.7.3",
     "vite": "^6.0.11"
   }
