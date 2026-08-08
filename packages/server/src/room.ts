@@ -88,6 +88,8 @@ export class MatchRoom {
   readonly maxIntentsPerTurn: number;
   readonly fullSnapshotEvery: number;
   readonly telemetryPath: string | null;
+  /** When true, `--seed` was set and every match reuses it. Otherwise re-roll each start. */
+  readonly fixedSeed: boolean;
   seed: number;
   roundTicks: number;
 
@@ -122,7 +124,8 @@ export class MatchRoom {
       opts.fullSnapshotEvery ?? DEFAULTS.fullSnapshotEvery;
     this.telemetryPath = opts.telemetryPath ?? null;
     this.botCount = Math.max(0, opts.botCount ?? DEFAULTS.botCount);
-    this.seed = opts.seed ?? Math.floor(Math.random() * 1e9);
+    this.fixedSeed = opts.seed !== undefined;
+    this.seed = opts.seed ?? randomSeed();
     // 0 = unlimited (last player standing). Pass --ticks N for a timed score finish.
     this.roundTicks = opts.roundTicks ?? 0;
     this.config = createSimConfig(DEFAULT_BALANCE, {
@@ -203,7 +206,8 @@ export class MatchRoom {
       type: "LobbyUpdate",
       seats: this.seatList(),
       phase: this.phase,
-      seed: this.seed,
+      // Hide the roll until kickoff so lobby clients don't treat a preview as locked.
+      seed: this.fixedSeed || this.phase !== "lobby" ? this.seed : null,
       capacity: this.capacity,
     });
   }
@@ -385,6 +389,8 @@ export class MatchRoom {
             playerCount * 3,
           );
 
+    if (!this.fixedSeed) this.seed = randomSeed();
+
     const match = createMatch({
       seed: this.seed,
       playerCount,
@@ -486,6 +492,9 @@ export class MatchRoom {
     }
 
     this.lobbyUpdate();
+    console.log(
+      `Match started · seed ${this.seed}${this.fixedSeed ? " (fixed)" : ""} · ${playerCount} players · ${nodeCount} systems`,
+    );
     this.timer = setInterval(() => this.endTurn(), this.turnIntervalMs);
   }
 
@@ -743,3 +752,7 @@ type MatchStartPlayers = Record<
   PlayerId,
   { id: PlayerId; displayName: string; homeworldId: string | null }
 >;
+
+function randomSeed(): number {
+  return Math.floor(Math.random() * 1e9);
+}

@@ -33,7 +33,8 @@ console.log(`WebSocket: ws://localhost:${bound}/ws`);
 console.log(`Metrics: http://localhost:${bound}/metrics`);
 console.log(`Capacity: ${srv.room.capacity}`);
 if (bots > 0) console.log(`Bots: ${srv.room.botCount}`);
-if (seed != null) console.log(`Seed: ${seed}`);
+if (seed != null) console.log(`Seed: ${seed} (fixed)`);
+else console.log(`Seed: random each match`);
 if (ticks > 0) {
   console.log(`Round ticks: ${ticks} (timed score finish)`);
 } else {

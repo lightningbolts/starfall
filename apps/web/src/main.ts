@@ -137,23 +137,18 @@ app.innerHTML = `
           <h3>How to play</h3>
           <ol class="help-list">
             <li><strong>You</strong> are the amber-ringed homeworld.</li>
-            <li><strong>Move:</strong> select a system with your ships, then click any system — the fleet routes itself along the lanes. Shift-click to add waypoints.</li>
-            <li><strong>Claim land</strong> — ships alone never capture:
-              <ol class="help-sub">
-                <li>Grow Pop on a system you own.</li>
-                <li>Press <kbd>C</kbd> or click <em>Load colonists</em>.</li>
-                <li>Move onto the target. It flips if colonists beat its garrison.</li>
-              </ol>
-            </li>
-            <li><strong>Build</strong> fighters at home; cruisers need a shipyard.</li>
-            <li><strong>Credits</strong> buy ships, tech and upgrades. <strong>Pop</strong> only buys territory.</li>
+            <li><strong>Move:</strong> select a system with your ships, then click where to go. The fleet routes along the lanes.</li>
+            <li><strong>Claim:</strong> click an enemy or neutral system — if you have enough population at your fleet’s system, colonists embark automatically and capture on arrival. Ships alone never flip ownership.</li>
+            <li><strong>Raid only:</strong> hold <kbd>Alt</kbd> while clicking to send ships without loading colonists.</li>
+            <li><strong>Build</strong> fighters at home; cruisers need a shipyard. <strong>Credits</strong> buy ships, tech and upgrades. <strong>Pop</strong> only buys territory.</li>
           </ol>
           <h3>Shortcuts</h3>
           <dl class="shortcuts">
             <div><dt><kbd>Tab</kbd></dt><dd>Cycle fleets here</dd></div>
             <div><dt><kbd>B</kbd></dt><dd>Build fighter</dd></div>
             <div><dt><kbd>U</kbd></dt><dd>Upgrade system</dd></div>
-            <div><dt><kbd>C</kbd></dt><dd>Load colonists</dd></div>
+            <div><dt><kbd>C</kbd></dt><dd>Load for claim</dd></div>
+            <div><dt><kbd>Alt</kbd>+click</dt><dd>Raid without colonists</dd></div>
             <div><dt><kbd>H</kbd></dt><dd>Jump to homeworld</dd></div>
             <div><dt><kbd>T</kbd></dt><dd>Tech panel</dd></div>
             <div><dt><kbd>Esc</kbd></dt><dd>Clear path / close panel</dd></div>
@@ -465,7 +460,7 @@ function cycleFleet(): void {
   updateStrip();
 }
 
-renderer.bindPanZoom((nodeId, shift) => {
+renderer.bindPanZoom((nodeId, mods) => {
   if (!match || !view) return;
   if (!nodeId) {
     selectNode(null);
@@ -475,7 +470,7 @@ renderer.bindPanZoom((nodeId, shift) => {
   const anchor = pathPreview[pathPreview.length - 1] ?? selectedNode;
 
   // Shift extends an explicit route without dispatching it yet.
-  if (shift && anchor && selectedFleetId) {
+  if (mods.shift && anchor && selectedFleetId) {
     const seg = findPath(anchor, nodeId);
     if (!seg || seg.length < 2) {
       flashIllegal();
@@ -498,9 +493,50 @@ renderer.bindPanZoom((nodeId, shift) => {
     return;
   }
   const full = [...pathPreview, ...tail.slice(1)];
+  // Claim by default when leaving for foreign/neutral land; Alt = ships-only raid.
+  if (!mods.alt) maybeAutoEmbark(nodeId);
   sendMove(full);
   selectNode(selectedNode);
 });
+
+/**
+ * Embark population before a claim move when the destination is not ours and
+ * we can actually beat its garrison. Alt-click skips this (raid only).
+ */
+function maybeAutoEmbark(targetId: NodeId): void {
+  if (!view || !match || !selectedFleetId || !selectedNode) return;
+  const fleet = view.fleets[selectedFleetId];
+  if (!fleet) return;
+  if ((fleet.invasionPopulation ?? 0) > 0) return;
+
+  const dest = view.nodes[targetId];
+  // Unknown / fogged destinations are still claimable — embark what we have.
+  if (dest && !isFoggedNode(dest) && dest.ownerId === view.self.id) return;
+
+  const src = view.nodes[selectedNode];
+  if (!src || isFoggedNode(src) || src.ownerId !== view.self.id) return;
+  const available = src.population;
+  if (available < 1) return;
+
+  let amount = available;
+  if (dest && !isFoggedNode(dest)) {
+    const role = match.map.nodes[targetId]?.role;
+    if (role) {
+      const needed = garrisonForRole(role, dest.level ?? 1, null) + 1;
+      // Only auto-load when we can actually take it; otherwise leave pop home
+      // so a ship-only raid doesn't burn colonists for nothing.
+      if (available < needed) return;
+      amount = needed;
+    }
+  }
+
+  net.intent({
+    type: "CommitInvasion",
+    fleetId: selectedFleetId,
+    fromNodeId: selectedNode,
+    population: amount,
+  });
+}
 
 window.addEventListener("keydown", (e) => {
   if (!match || !view) return;
@@ -982,7 +1018,8 @@ function updateStrip(): void {
   if (!selectedNode || !view || !match) {
     strip.classList.add("hidden");
     tip.classList.remove("hidden");
-    tip.textContent = "Click a system to inspect it. Press ? for help.";
+    tip.textContent =
+      "Select your ships, then click a system to move. Claiming enemy land auto-loads colonists — press ? for help.";
     lastStripKey = "";
     return;
   }
@@ -1115,18 +1152,18 @@ function updateStrip(): void {
   if (!mine) {
     hint.textContent =
       invPop > (garrisonShown ?? 0)
-        ? `Ready to claim: move your loaded fleet here (needs more than ${garrisonShown}).`
-        : `To take this system: load colonists on a system you own (need more than ${garrisonShown}), then move here. Ships alone never capture.`;
+        ? `Ready to claim: your loaded fleet will take this if colonists beat garrison ${garrisonShown}.`
+        : `To claim: select a system you own with ships + enough Pop, then click here. Colonists embark automatically. Alt-click to raid with ships only.`;
   } else if (!selectedFleetId) {
     hint.textContent =
       "No fleet stationed here. Build ships, or select a system where yours are parked.";
   } else if (invPop > 0) {
-    hint.textContent = `${invPop} colonists aboard. Click any system to route there — it flips on arrival if colonists beat the garrison.`;
+    hint.textContent = `${invPop} colonists aboard. Click an enemy or neutral system to claim it on arrival.`;
   } else if (pathPreview.length > 1) {
     hint.textContent = `Route staged over ${pathPreview.length - 1} hops. Click a destination to dispatch, or press Escape to clear.`;
   } else {
     hint.textContent =
-      "Click any system to route your fleet there. Shift-click to add waypoints.";
+      "Click a system to move. Clicking enemy/neutral land auto-loads colonists when you can claim it. Alt-click = ships only.";
   }
 
   if (mine && (role === "shipyard" || role === "homeworld")) {
@@ -1191,8 +1228,8 @@ function updateStrip(): void {
     const loadPop = nodePop ?? 0;
     addAction(
       actions,
-      loadPop > 0 ? `Load ${loadPop} colonists` : "Load colonists",
-      "Put this system's population aboard, then move onto a target to annex it",
+      loadPop > 0 ? `Load ${loadPop} to claim` : "Load to claim",
+      "Embark this system's population. Usually automatic when you click a claimable target.",
       () => {
         net.intent({
           type: "CommitInvasion",

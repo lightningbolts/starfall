@@ -344,4 +344,38 @@ describe("MatchRoom", () => {
     expect(room.getTurnArchive().length).toBe(40);
     room.stop();
   });
+
+  it("rolls a fresh random seed each match unless --seed is fixed", () => {
+    const room = new MatchRoom({
+      turnIntervalMs: 10_000,
+      capacity: 4,
+    });
+    expect(room.fixedSeed).toBe(false);
+    const lobbyMsgs: ServerMessage[] = [];
+    room.join("a", "A", (m) => lobbyMsgs.push(m));
+    const lobby = lobbyMsgs.find((m) => m.type === "LobbyUpdate");
+    expect(lobby?.type === "LobbyUpdate" && lobby.seed).toBeNull();
+
+    const seeds = new Set<number>();
+    for (let i = 0; i < 3; i++) {
+      const inbox: ServerMessage[] = [];
+      // Remake seats each loop: finished rooms can't restart, so use fresh rooms.
+      const r = new MatchRoom({ turnIntervalMs: 10_000, capacity: 4 });
+      r.join("a", "A", (m) => inbox.push(m));
+      r.join("b", "B", () => undefined);
+      r.startMatch("a");
+      const start = inbox.find((m) => m.type === "MatchStart");
+      expect(start?.type).toBe("MatchStart");
+      if (start?.type === "MatchStart") seeds.add(start.seed);
+      r.stop();
+    }
+    // Extremely unlikely all three collide in 1e9 space.
+    expect(seeds.size).toBeGreaterThan(1);
+
+    const fixed = new MatchRoom({ seed: 12345, turnIntervalMs: 10_000, capacity: 4 });
+    expect(fixed.fixedSeed).toBe(true);
+    expect(fixed.seed).toBe(12345);
+    fixed.stop();
+    room.stop();
+  });
 });

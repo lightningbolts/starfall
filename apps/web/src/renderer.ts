@@ -209,7 +209,7 @@ export class MapRenderer {
   }
 
   bindPanZoom(
-    onClick: (nodeId: NodeId | null, shift: boolean) => void,
+    onClick: (nodeId: NodeId | null, mods: { shift: boolean; alt: boolean }) => void,
     onMinimapJump?: (world: Point) => void,
   ): void {
     this.canvas.addEventListener(
@@ -273,7 +273,10 @@ export class MapRenderer {
       this.canvas.style.cursor = this.hoverNode ? "pointer" : "grab";
       if (this.pointerMoved) return;
       const world = this.screenToWorld(e.clientX, e.clientY);
-      onClick(this.hitNode(world.x, world.y), e.shiftKey);
+      onClick(this.hitNode(world.x, world.y), {
+        shift: e.shiftKey,
+        alt: e.altKey,
+      });
     });
 
     // Right-click is used to clear a pending path; never show the menu.

@@ -24,13 +24,15 @@ Or two terminals:
 
 ```bash
 # Terminal 1 — game server with bots (must stay running)
-npm exec --yes pnpm@9.15.0 run server -- --seed 42 --players 8 --bots 7
+npm exec --yes pnpm@9.15.0 run server -- --players 8 --bots 7
 
 # Terminal 2 — Vite (proxies /ws → :8787)
 npm exec --yes pnpm@9.15.0 run web
 ```
 
 Open http://localhost:5173, Join, Ready — match starts against the bots (last player standing).
+
+Each match rolls a **random seed** (new galaxy). Pass `--seed N` only when you want a fixed, reproducible map.
 
 Open two browser tabs to `http://localhost:5173`, join with different names, Ready both (or host Start).
 
