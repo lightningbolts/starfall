@@ -2,6 +2,24 @@ import type { ClientMessage, Intent, ServerMessage } from "@starfall/sim";
 
 export type MessageHandler = (msg: ServerMessage) => void;
 
+const CLIENT_ID_KEY = "starfall.clientId";
+
+export function loadStoredClientId(): string | null {
+  try {
+    return localStorage.getItem(CLIENT_ID_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function storeClientId(id: string): void {
+  try {
+    localStorage.setItem(CLIENT_ID_KEY, id);
+  } catch {
+    /* ignore */
+  }
+}
+
 export class NetClient {
   private ws: WebSocket | null = null;
   private seq = 0;
@@ -30,8 +48,10 @@ export class NetClient {
     this.ws.send(JSON.stringify(msg));
   }
 
-  hello(displayName: string): void {
-    this.send({ type: "Hello", displayName });
+  hello(displayName: string, clientId?: string | null): void {
+    const msg: ClientMessage = { type: "Hello", displayName };
+    if (clientId) (msg as { clientId?: string }).clientId = clientId;
+    this.send(msg);
   }
 
   setReady(ready: boolean): void {

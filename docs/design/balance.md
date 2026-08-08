@@ -167,8 +167,11 @@ Policy: [rulings.md](./rulings.md) §2.
 | Per 10 population owned | 1 |
 | Per 100 fleet power | 2 |
 | Per researched tech | 5 |
+| Elimination bonus (to capturer on knock-out) | 50 |
 
-Elimination of all rivals: instant win (overrides score).
+Elimination of all rivals: instant win (overrides score). Time-limit win: highest score (includes elimination bonuses).
+
+When iterating numbers: run a match, read `GET /metrics` (or CLI FFA telemetry summary), then adjust `docs/design/balance.csv` and mirror in `packages/sim/src/balance.ts`.
 
 ---
 

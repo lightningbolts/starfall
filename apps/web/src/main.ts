@@ -3,13 +3,20 @@ import type {
   LobbySeat,
   MatchStartMessage,
   NodeId,
+  PlayerId,
   PlayerView,
   ScoreRank,
   ServerMessage,
   TechId,
+  TickUpdateMessage,
 } from "@starfall/sim";
-import { TECH_IDS, TECH_TIER, isFoggedNode } from "@starfall/sim";
-import { NetClient } from "./net.js";
+import {
+  TECH_IDS,
+  TECH_TIER,
+  applyPlayerViewDelta,
+  isFoggedNode,
+} from "@starfall/sim";
+import { NetClient, loadStoredClientId, storeClientId } from "./net.js";
 import { MapRenderer, type RenderState } from "./renderer.js";
 
 const TECH_BLURB: Record<TechId, string> = {
@@ -37,6 +44,7 @@ app.innerHTML = `
         <button type="button" id="start-btn" disabled>Start</button>
       </div>
     </form>
+    <p class="lobby-capacity" id="lobby-capacity"></p>
     <ul class="lobby-seats" id="seats"></ul>
     <p class="lobby-error" id="lobby-error"></p>
   </section>
@@ -45,6 +53,11 @@ app.innerHTML = `
     <div class="hud-top-left" id="res"><span>CR</span><b id="credits">0</b> &nbsp; <span>POP</span><b id="pop">0</b></div>
     <div class="hud-top-right"><div id="timer">—</div><div id="rank">Rank —</div></div>
     <button class="hud-btn tech-toggle" id="tech-toggle" type="button">Tech</button>
+    <div class="hud-diplo" id="diplo">
+      <h3>Diplomacy</h3>
+      <div id="diplo-body"></div>
+    </div>
+    <div class="hud-ranks" id="ranks-panel"></div>
     <div class="hud-wordmark">Starfall</div>
     <div class="hud-strip hidden" id="strip">
       <div class="meta" id="strip-meta"></div>
@@ -69,7 +82,8 @@ app.innerHTML = `
 `;
 
 const net = new NetClient();
-let clientId: string | null = null;
+let clientId: string | null = loadStoredClientId();
+let lobbyCapacity = 100;
 let isHost = false;
 let ready = false;
 let joined = false;
@@ -116,6 +130,7 @@ function emptyView(): PlayerView {
       credits: 0,
       researched: [],
       allies: [],
+      allianceProposals: [],
       eliminated: false,
       score: 0,
       homeworldId: null,
@@ -137,13 +152,13 @@ document.getElementById("join-form")!.addEventListener("submit", (e) => {
   if (!joined) {
     net.connect();
     net.onOpen = () => {
-      net.hello(name);
+      net.hello(name, clientId);
       joined = true;
       readyBtn.disabled = false;
       (document.getElementById("join-btn") as HTMLButtonElement).disabled = true;
     };
   } else {
-    net.hello(name);
+    net.hello(name, clientId);
   }
 });
 
@@ -174,7 +189,6 @@ renderer.bindPanZoom((nodeId, shift) => {
   }
 
   if (shift && pathPreview.length > 0) {
-    // shift-click continues path if adjacent
     const last = pathPreview[pathPreview.length - 1]!;
     const neighbors = match.map.nodes[last]?.neighbors ?? [];
     if (neighbors.includes(nodeId)) {
@@ -190,7 +204,6 @@ renderer.bindPanZoom((nodeId, shift) => {
   if (pathPreview.length === 0) {
     selectedNode = nodeId;
     pathPreview = [nodeId];
-    // Prefer own fleet at node
     selectedFleetId =
       Object.values(view.fleets).find(
         (f) =>
@@ -223,8 +236,6 @@ renderer.bindPanZoom((nodeId, shift) => {
 
 function commitPathIfReady(): void {
   if (!view || pathPreview.length < 2 || !selectedFleetId) return;
-  // Double-click end: if path length >= 2, send on second node selection with fleet
-  // Auto-send when path grows to 2+ and user stops — send immediately for snappy feel
   sendMove(pathPreview);
   pathPreview = [pathPreview[pathPreview.length - 1]!];
   selectedNode = pathPreview[0]!;
@@ -264,15 +275,18 @@ function handleServer(msg: ServerMessage): void {
   switch (msg.type) {
     case "Welcome":
       clientId = msg.clientId;
+      storeClientId(msg.clientId);
+      lobbyCapacity = msg.capacity;
       break;
     case "LobbyUpdate":
+      lobbyCapacity = msg.capacity;
       renderLobby(msg.seats);
       break;
     case "MatchStart":
       beginMatch(msg);
       break;
     case "TickUpdate":
-      applyTick(msg.view, msg.events, msg.ranks);
+      applyTickUpdate(msg);
       break;
     case "MatchOver":
       showOver(msg.ranks, msg.winnerId);
@@ -286,6 +300,8 @@ function handleServer(msg: ServerMessage): void {
 }
 
 function renderLobby(seats: LobbySeat[]): void {
+  document.getElementById("lobby-capacity")!.textContent =
+    `${seats.length} / ${lobbyCapacity} seats`;
   seatsEl.innerHTML = seats
     .map(
       (s) =>
@@ -303,6 +319,8 @@ function beginMatch(msg: MatchStartMessage): void {
   match = msg;
   view = msg.view;
   roundTicks = msg.roundTicks;
+  clientId = msg.clientId;
+  storeClientId(msg.clientId);
   lobbyEl.classList.add("hidden");
   matchEl.classList.remove("hidden");
   renderState.map = msg.map;
@@ -315,23 +333,31 @@ function beginMatch(msg: MatchStartMessage): void {
   updateHud();
   updateTech();
   updateStrip();
+  updateDiplo();
+  updateRanksPanel();
 }
 
-function applyTick(
-  next: PlayerView,
-  events: { combats: unknown[]; annexations: { nodeId: string; success: boolean }[] },
-  nextRanks?: ScoreRank[],
-): void {
-  view = next;
-  renderState.view = next;
-  if (nextRanks) ranks = nextRanks;
-  if (events.combats.length) renderState.combatFlash = 1;
-  for (const a of events.annexations) {
+function applyTickUpdate(msg: TickUpdateMessage): void {
+  if (msg.full) {
+    view = msg.full;
+  } else if (msg.delta && view) {
+    view = applyPlayerViewDelta(view, msg.delta);
+  } else if (msg.delta) {
+    // Should not happen without prior full; ignore
+    return;
+  }
+  if (!view) return;
+  renderState.view = view;
+  if (msg.ranks) ranks = msg.ranks;
+  if (msg.events.combats.length) renderState.combatFlash = 1;
+  for (const a of msg.events.annexations) {
     if (a.success) renderState.ownershipPulse.set(a.nodeId, 1);
   }
   updateHud();
   updateTech();
   updateStrip();
+  updateDiplo();
+  updateRanksPanel();
 }
 
 function updateHud(): void {
@@ -352,6 +378,92 @@ function updateHud(): void {
   document.getElementById("rank")!.textContent = mine
     ? `Rank ${mine.rank} · ${mine.score}`
     : `Score ${view.self.score}`;
+}
+
+function updateDiplo(): void {
+  if (!view || !match) return;
+  const body = document.getElementById("diplo-body")!;
+  const parts: string[] = [];
+
+  const allies = view.self.allies;
+  if (allies.length) {
+    parts.push("<strong>Allies</strong><ul>");
+    for (const id of allies) {
+      const name = match.players[id]?.displayName ?? id;
+      parts.push(
+        `<li><span>${escapeHtml(name)}</span><button type="button" class="hud-btn" data-break="${id}">Break</button></li>`,
+      );
+    }
+    parts.push("</ul>");
+  }
+
+  const props = view.self.allianceProposals;
+  if (props.length) {
+    parts.push("<strong>Incoming</strong><ul>");
+    for (const id of props) {
+      const name = match.players[id]?.displayName ?? id;
+      parts.push(
+        `<li><span>${escapeHtml(name)}</span><button type="button" class="hud-btn" data-accept="${id}">Accept</button></li>`,
+      );
+    }
+    parts.push("</ul>");
+  }
+
+  if (!parts.length) {
+    parts.push("<span>No alliances. Propose from ranks.</span>");
+  }
+  body.innerHTML = parts.join("");
+  body.querySelectorAll("[data-break]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const withPlayerId = (btn as HTMLElement).dataset.break!;
+      net.intent({ type: "BreakAlliance", withPlayerId });
+    });
+  });
+  body.querySelectorAll("[data-accept]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const fromPlayerId = (btn as HTMLElement).dataset.accept!;
+      net.intent({ type: "AcceptAlliance", fromPlayerId });
+    });
+  });
+}
+
+function updateRanksPanel(): void {
+  if (!match) return;
+  const el = document.getElementById("ranks-panel")!;
+  const rows =
+    ranks.length > 0
+      ? ranks
+      : Object.values(match.players).map((p, i) => ({
+          playerId: p.id,
+          displayName: p.displayName,
+          score: view?.scores[p.id] ?? 0,
+          rank: i + 1,
+          eliminated: false,
+          disconnected: false,
+        }));
+  el.innerHTML = rows
+    .slice(0, 20)
+    .map((r) => {
+      const self = r.playerId === view?.self.id;
+      const ally = view?.self.allies.includes(r.playerId);
+      return `<button type="button" data-propose="${r.playerId}" ${
+        self ? "disabled" : ""
+      }>#${r.rank} ${escapeHtml(r.displayName)} · ${r.score}${
+        ally ? " ★" : ""
+      }</button>`;
+    })
+    .join("");
+  el.querySelectorAll("[data-propose]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const toPlayerId = (btn as HTMLElement).dataset.propose as PlayerId;
+      if (!view || toPlayerId === view.self.id) return;
+      if (view.self.allies.includes(toPlayerId)) {
+        net.intent({ type: "BreakAlliance", withPlayerId: toPlayerId });
+      } else {
+        net.intent({ type: "ProposeAlliance", toPlayerId });
+      }
+    });
+  });
 }
 
 function updateTech(): void {
@@ -442,16 +554,28 @@ function updateStrip(): void {
       net.intent({ type: "UpgradeNode", nodeId: selectedNode! }),
     );
   }
+  if (
+    owner &&
+    owner !== view.self.id &&
+    !view.self.allies.includes(owner)
+  ) {
+    addAction(actions, "Ally", () =>
+      net.intent({ type: "ProposeAlliance", toPlayerId: owner }),
+    );
+  }
   if (selectedFleetId && mine) {
     addAction(actions, "Invade", () => {
-      const pop = Math.min(5, Math.floor(
-        Object.values(view!.nodes).reduce((n, node) => {
-          if (isFoggedNode(node)) return n;
-          if (node.id === selectedNode && node.ownerId === view!.self.id)
-            return node.population;
-          return n;
-        }, 0),
-      ));
+      const pop = Math.min(
+        5,
+        Math.floor(
+          Object.values(view!.nodes).reduce((n, node) => {
+            if (isFoggedNode(node)) return n;
+            if (node.id === selectedNode && node.ownerId === view!.self.id)
+              return node.population;
+            return n;
+          }, 0),
+        ),
+      );
       if (pop < 1) {
         flashIllegal();
         return;
@@ -486,9 +610,7 @@ function showOver(finalRanks: ScoreRank[], winnerId: string | null): void {
   over.classList.remove("hidden");
   const title = document.getElementById("over-title")!;
   const winner = finalRanks.find((r) => r.playerId === winnerId);
-  title.textContent = winner
-    ? `${winner.displayName} wins`
-    : "Match over";
+  title.textContent = winner ? `${winner.displayName} wins` : "Match over";
   document.getElementById("over-ranks")!.innerHTML = finalRanks
     .map(
       (r) =>

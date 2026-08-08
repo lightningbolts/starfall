@@ -87,9 +87,12 @@ export {
   buildPlayerView,
   createVisionMemory,
   isFoggedNode,
+  diffPlayerView,
+  applyPlayerViewDelta,
   type VisionMemory,
   type PlayerView,
   type PlayerViewSelf,
+  type PlayerViewDelta,
   type ViewNode,
   type LastKnownNode,
 } from "./view.js";
@@ -111,3 +114,9 @@ export type {
   ScoreRank,
   WirePhase,
 } from "./protocol.js";
+export {
+  createMatchTelemetry,
+  accumulateTelemetry,
+  formatTelemetrySummary,
+  type MatchTelemetry,
+} from "./telemetry.js";

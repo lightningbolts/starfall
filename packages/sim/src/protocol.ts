@@ -12,7 +12,7 @@ import type {
   Turn,
   TurnNumber,
 } from "./types.js";
-import type { PlayerView } from "./view.js";
+import type { PlayerView, PlayerViewDelta } from "./view.js";
 
 export type WirePhase = "lobby" | "running" | "finished";
 
@@ -25,10 +25,12 @@ export interface LobbySeat {
   host: boolean;
 }
 
-/** C→S: join lobby with display name. */
+/** C→S: join lobby with display name; optional clientId for reconnect. */
 export interface HelloMessage {
   type: "Hello";
   displayName: string;
+  /** Persist across reconnects; must match an existing seat to rebind. */
+  clientId?: ClientId;
 }
 
 /** S→C: assigned seat. */
@@ -54,6 +56,7 @@ export interface LobbyUpdateMessage {
   seats: LobbySeat[];
   phase: WirePhase;
   seed: number | null;
+  capacity: number;
 }
 
 export interface MatchStartMessage {
@@ -102,7 +105,10 @@ export interface ScoreRank {
 
 export interface TickUpdateMessage {
   type: "TickUpdate";
-  view: PlayerView;
+  /** Full fogged snapshot (every 50 ticks, MatchStart, reconnect). */
+  full?: PlayerView;
+  /** Sparse patch when full is omitted. */
+  delta?: PlayerViewDelta;
   events: TickUpdates;
   /** Present every 10 ticks (and on match start). */
   ranks?: ScoreRank[];

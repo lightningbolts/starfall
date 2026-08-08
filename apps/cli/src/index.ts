@@ -1,8 +1,11 @@
 #!/usr/bin/env node
 import {
+  accumulateTelemetry,
   createMatch,
+  createMatchTelemetry,
   createSimConfig,
   executeNextTick,
+  formatTelemetrySummary,
   type Turn,
 } from "@starfall/sim";
 import { botIntents, type BotBrain, type BotPolicy } from "./bots.js";
@@ -59,6 +62,8 @@ function runFfa() {
     `Starfall FFA  seed=${args.seed} players=${args.players} ticks=${args.ticks} nodes=${Object.keys(state.map.nodes).length}`,
   );
 
+  const tel = createMatchTelemetry();
+  let prevElim = 0;
   const t0 = Date.now();
   let turnNumber = 0;
   while (state.status === "running" && state.tick < args.ticks) {
@@ -66,7 +71,16 @@ function runFfa() {
       botIntents(state, b, config.balance),
     );
     const turn: Turn = { turnNumber, intents };
-    executeNextTick(state, turn, config, game);
+    const step0 = performance.now();
+    const { updates } = executeNextTick(state, turn, config, game);
+    accumulateTelemetry(
+      tel,
+      state,
+      updates,
+      performance.now() - step0,
+      prevElim,
+    );
+    prevElim = Object.values(state.players).filter((p) => p.eliminated).length;
     turnNumber += 1;
 
     if (state.tick % 1000 === 0) {
@@ -81,6 +95,7 @@ function runFfa() {
   const elapsed = Date.now() - t0;
   console.log(`\nMatch finished in ${elapsed}ms wall | sim ticks=${state.tick}`);
   console.log(`Status: ${state.status} winner=${state.winnerId ?? "none"}`);
+  console.log(`Telemetry: ${formatTelemetrySummary(tel)}`);
   console.log("\nScoreboard:");
   const ranked = Object.values(state.players).sort((a, b) => b.score - a.score);
   for (const p of ranked) {

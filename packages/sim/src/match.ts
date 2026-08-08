@@ -74,6 +74,7 @@ export function createMatch(opts: CreateMatchOptions): {
       allies: [],
       eliminated: false,
       score: 0,
+      bonusScore: 0,
       homeworldId: homeId,
     };
     clientToPlayer[clientId] = playerId;

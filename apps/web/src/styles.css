@@ -159,9 +159,18 @@ input {
   margin: 0.5rem 0 0;
   padding: 0;
   width: min(20rem, 86vw);
+  max-height: min(40vh, 16rem);
+  overflow-y: auto;
   position: relative;
   color: var(--sf-text-dim);
   font-size: 0.95rem;
+}
+
+.lobby-capacity {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--sf-text-dim);
+  position: relative;
 }
 
 .lobby-seats li {
@@ -170,6 +179,86 @@ input {
   padding: 0.35rem 0;
   border-bottom: 1px solid var(--sf-hud-border);
 }
+
+.hud-diplo {
+  position: absolute;
+  top: 3.5rem;
+  left: 0.75rem;
+  z-index: 6;
+  pointer-events: auto;
+  width: min(14rem, 42vw);
+  background: var(--sf-hud-bg);
+  border: 1px solid var(--sf-hud-border);
+  padding: 0.5rem 0.65rem;
+  border-radius: 2px;
+  font-size: 0.8rem;
+  color: var(--sf-text-dim);
+}
+
+.hud-diplo h3 {
+  margin: 0 0 0.35rem;
+  font-family: var(--sf-font-display);
+  font-size: 0.85rem;
+  color: var(--sf-text);
+  font-weight: 700;
+}
+
+.hud-diplo ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.hud-diplo li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0;
+}
+
+.hud-diplo .hud-btn {
+  flex: 0 0 auto;
+  min-height: 28px;
+  padding: 0 0.5rem;
+  font-size: 0.75rem;
+}
+
+.hud-ranks {
+  position: absolute;
+  top: auto;
+  bottom: 5.5rem;
+  left: 0.75rem;
+  right: auto;
+  z-index: 5;
+  pointer-events: auto;
+  width: min(12rem, 36vw);
+  max-height: 28vh;
+  overflow-y: auto;
+  background: var(--sf-hud-bg);
+  border: 1px solid var(--sf-hud-border);
+  padding: 0.4rem 0.55rem;
+  border-radius: 2px;
+  font-size: 0.75rem;
+  color: var(--sf-text-dim);
+}
+
+.hud-ranks button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  padding: 0.2rem 0;
+  font: inherit;
+}
+
+.hud-ranks button:hover {
+  color: var(--sf-self);
+}
+
 
 .lobby-error {
   color: var(--sf-danger);

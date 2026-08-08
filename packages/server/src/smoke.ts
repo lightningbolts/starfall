@@ -79,14 +79,18 @@ async function main(): Promise<void> {
 
     const tick = await once(
       a,
-      (m) => m.type === "TickUpdate" && m.view.self.credits < 80,
+      (m) =>
+        m.type === "TickUpdate" &&
+        (m.full?.self.credits ?? m.delta?.self?.credits ?? 999) < 80,
     );
     if (tick.type !== "TickUpdate") throw new Error("no debiting tick");
+    const credits =
+      tick.full?.self.credits ?? tick.delta?.self?.credits ?? NaN;
 
     console.log("smoke ok", {
       port,
       seats: [startA.playerId, startB.playerId],
-      credits: tick.view.self.credits,
+      credits,
       visible: startA.view.visibleNodes.length,
     });
 

@@ -18,22 +18,34 @@ describe("parseIntent", () => {
 });
 
 describe("parseClientMessage", () => {
-  it("trims Hello display names", () => {
+  it("trims Hello display names and accepts clientId", () => {
     expect(parseClientMessage({ type: "Hello", displayName: "  Ace  " })).toEqual({
       type: "Hello",
       displayName: "Ace",
+    });
+    expect(
+      parseClientMessage({
+        type: "Hello",
+        displayName: "Ace",
+        clientId: "abc-12345",
+      }),
+    ).toEqual({
+      type: "Hello",
+      displayName: "Ace",
+      clientId: "abc-12345",
     });
     expect(parseClientMessage({ type: "Hello", displayName: "   " })).toBeNull();
   });
 });
 
 describe("MatchRoom", () => {
-  it("runs lobby → match → ticks with fogged views", () => {
+  it("runs lobby → match → ticks with fogged views and deltas", () => {
     const room = new MatchRoom({
       seed: 42,
       roundTicks: 50,
-      turnIntervalMs: 10_000, // disable auto; we tick manually
+      turnIntervalMs: 10_000,
       capacity: 4,
+      fullSnapshotEvery: 50,
     });
     const inbox: Record<string, ServerMessage[]> = { a: [], b: [] };
     const sendA = (m: ServerMessage) => inbox.a!.push(m);
@@ -66,9 +78,49 @@ describe("MatchRoom", () => {
     const tick = inbox.a!.filter((m) => m.type === "TickUpdate").at(-1);
     expect(tick?.type).toBe("TickUpdate");
     if (tick?.type === "TickUpdate") {
-      expect(tick.view.self.credits).toBeLessThan(80);
+      // tick 1 → delta (full every 50)
+      expect(tick.delta || tick.full).toBeTruthy();
+      const credits =
+        tick.full?.self.credits ??
+        tick.delta?.self?.credits;
+      expect(credits).toBeLessThan(80);
     }
+    expect(room.getTurnArchive().length).toBe(1);
 
+    room.stop();
+  });
+
+  it("rate-limits intents per turn", () => {
+    const room = new MatchRoom({
+      seed: 42,
+      roundTicks: 50,
+      turnIntervalMs: 10_000,
+      capacity: 4,
+      maxIntentsPerTurn: 2,
+    });
+    const errs: ServerMessage[] = [];
+    room.join("a", "Alice", (m) => {
+      if (m.type === "Error") errs.push(m);
+    });
+    room.join("b", "Bob", () => undefined);
+    room.setReady("a", true);
+    room.setReady("b", true);
+    const home = room.getStateForTests()!.players.p0!.homeworldId!;
+    for (let i = 0; i < 5; i++) {
+      room.enqueueIntent({
+        clientId: "a",
+        sequence: i,
+        intent: {
+          type: "BuildShips",
+          nodeId: home,
+          shipType: "fighter",
+          count: 1,
+        },
+      });
+    }
+    expect(errs.some((e) => e.type === "Error" && e.code === "rate_limited")).toBe(
+      true,
+    );
     room.stop();
   });
 
@@ -107,9 +159,14 @@ describe("MatchRoom", () => {
     room.tickOnceForTests();
     ranks = room.buildRanks();
     expect(ranks.find((r) => r.playerId === "p1")?.disconnected).toBe(true);
-    // Fleets still present — no AI cleanup
     expect(Object.keys(room.getStateForTests()!.fleets).length).toBeGreaterThan(0);
     room.stop();
     vi.useRealTimers();
+  });
+
+  it("defaults capacity to 100", () => {
+    const room = new MatchRoom({ turnIntervalMs: 10_000 });
+    expect(room.capacity).toBe(100);
+    room.stop();
   });
 });

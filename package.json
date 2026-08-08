@@ -14,6 +14,8 @@
     "sim:ffa": "pnpm --filter @starfall/cli start",
     "server": "pnpm --filter @starfall/server start",
     "web": "pnpm --filter @starfall/web dev",
+    "smoke": "pnpm --filter @starfall/server smoke",
+    "load": "pnpm --filter @starfall/server load",
     "typecheck": "pnpm -r run typecheck"
   }
 }

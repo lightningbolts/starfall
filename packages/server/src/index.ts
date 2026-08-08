@@ -12,17 +12,22 @@ const seed = arg("seed") ? Number(arg("seed")) : undefined;
 const ticks = arg("ticks") ? Number(arg("ticks")) : undefined;
 const players = arg("players") ? Number(arg("players")) : undefined;
 const staticDir = arg("static");
+const telemetry = arg("telemetry");
 
 const srv = startServer({
   port,
   seed,
   roundTicks: ticks,
-  capacity: players ?? 8,
+  capacity: players ?? 100,
   ...(staticDir ? { staticDir } : {}),
+  ...(telemetry ? { telemetryPath: telemetry } : {}),
 });
 
 const bound = await srv.ready;
 console.log(`Starfall server listening on http://localhost:${bound}`);
 console.log(`WebSocket: ws://localhost:${bound}/ws`);
+console.log(`Metrics: http://localhost:${bound}/metrics`);
+console.log(`Capacity: ${srv.room.capacity}`);
 if (seed != null) console.log(`Seed: ${seed}`);
 if (ticks != null) console.log(`Round ticks: ${ticks}`);
+if (telemetry) console.log(`Telemetry JSONL: ${telemetry}`);

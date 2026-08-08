@@ -94,6 +94,8 @@ export interface PlayerState {
   allies: PlayerId[];
   eliminated: boolean;
   score: number;
+  /** Accumulated bonuses (e.g. elimination) folded into score each tick. */
+  bonusScore: number;
   homeworldId: NodeId | null;
 }
 

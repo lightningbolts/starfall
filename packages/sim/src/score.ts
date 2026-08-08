@@ -26,6 +26,7 @@ export function computeScores(game: Game): void {
     }
     score += Math.floor(power / 100) * bal.per100FleetPower;
     score += player.researched.size * bal.perTech;
+    score += player.bonusScore;
     player.score = score;
   }
 }

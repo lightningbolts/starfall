@@ -1,25 +1,32 @@
 import {
+  accumulateTelemetry,
   buildPlayerView,
   computeScores,
   createMatch,
+  createMatchTelemetry,
   createSimConfig,
   createVisionMemory,
   DEFAULT_BALANCE,
+  diffPlayerView,
   emptyTurn,
   executeNextTick,
   type ClientId,
   type Game,
   type GameState,
   type LobbySeat,
+  type MatchTelemetry,
   type PlayerId,
+  type PlayerView,
   type ScoreRank,
   type SeatRosterEntry,
   type ServerMessage,
   type SimConfig,
   type StampedIntent,
+  type Turn,
   type VisionMemory,
   type WirePhase,
 } from "@starfall/sim";
+import { appendFileSync } from "node:fs";
 import { seatColorsForPlayers } from "./colors.js";
 
 export interface SeatRuntime {
@@ -31,6 +38,9 @@ export interface SeatRuntime {
   disconnectedAt: number | null;
   playerId: PlayerId | null;
   send: (msg: ServerMessage) => void;
+  /** Intents accepted this turn (rate limit). */
+  intentsThisTurn: number;
+  rateLimitWarned: boolean;
 }
 
 export interface MatchRoomOptions {
@@ -40,13 +50,21 @@ export interface MatchRoomOptions {
   nodeCountFactor?: number;
   disconnectGraceMs?: number;
   turnIntervalMs?: number;
+  /** Max intents per seat per turn. */
+  maxIntentsPerTurn?: number;
+  /** Full view every N ticks. */
+  fullSnapshotEvery?: number;
+  /** Optional JSONL path for per-tick telemetry. */
+  telemetryPath?: string;
 }
 
 const DEFAULTS = {
-  capacity: 8,
+  capacity: 100,
   disconnectGraceMs: 60_000,
   nodeCountFactor: 2.5,
   turnIntervalMs: 100,
+  maxIntentsPerTurn: 8,
+  fullSnapshotEvery: 50,
 };
 
 export class MatchRoom {
@@ -54,6 +72,9 @@ export class MatchRoom {
   readonly disconnectGraceMs: number;
   readonly nodeCountFactor: number;
   readonly turnIntervalMs: number;
+  readonly maxIntentsPerTurn: number;
+  readonly fullSnapshotEvery: number;
+  readonly telemetryPath: string | null;
   seed: number;
   roundTicks: number;
 
@@ -61,19 +82,30 @@ export class MatchRoom {
   private seats = new Map<ClientId, SeatRuntime>();
   private intentBuffer: StampedIntent[] = [];
   private turnNumber = 0;
+  private turns: Turn[] = [];
   private timer: ReturnType<typeof setInterval> | null = null;
   private state: GameState | null = null;
   private game: Game | null = null;
   private config: SimConfig;
   private memories = new Map<PlayerId, VisionMemory>();
+  private lastViews = new Map<PlayerId, PlayerView>();
   private seatColorMap: Record<PlayerId, string> = {};
   private markedDisconnected = new Set<PlayerId>();
+  private telemetry = createMatchTelemetry();
+  private prevEliminated = 0;
+  private mapPayload: MatchStartMessageMap | null = null;
+  private playersMeta: MatchStartPlayers | null = null;
 
   constructor(opts: MatchRoomOptions = {}) {
     this.capacity = opts.capacity ?? DEFAULTS.capacity;
     this.disconnectGraceMs = opts.disconnectGraceMs ?? DEFAULTS.disconnectGraceMs;
     this.nodeCountFactor = opts.nodeCountFactor ?? DEFAULTS.nodeCountFactor;
     this.turnIntervalMs = opts.turnIntervalMs ?? DEFAULTS.turnIntervalMs;
+    this.maxIntentsPerTurn =
+      opts.maxIntentsPerTurn ?? DEFAULTS.maxIntentsPerTurn;
+    this.fullSnapshotEvery =
+      opts.fullSnapshotEvery ?? DEFAULTS.fullSnapshotEvery;
+    this.telemetryPath = opts.telemetryPath ?? null;
     this.seed = opts.seed ?? Math.floor(Math.random() * 1e9);
     this.roundTicks =
       opts.roundTicks ?? Math.min(DEFAULT_BALANCE.roundTicks, 3600);
@@ -84,6 +116,14 @@ export class MatchRoom {
 
   getSeat(clientId: ClientId): SeatRuntime | undefined {
     return this.seats.get(clientId);
+  }
+
+  getTelemetry(): MatchTelemetry {
+    return { ...this.telemetry };
+  }
+
+  getTurnArchive(): readonly Turn[] {
+    return this.turns;
   }
 
   seatList(): LobbySeat[] {
@@ -115,7 +155,8 @@ export class MatchRoom {
       type: "LobbyUpdate",
       seats: this.seatList(),
       phase: this.phase,
-      seed: this.phase === "lobby" ? this.seed : this.seed,
+      seed: this.seed,
+      capacity: this.capacity,
     });
   }
 
@@ -124,19 +165,36 @@ export class MatchRoom {
     displayName: string,
     send: (msg: ServerMessage) => void,
   ): { ok: true } | { ok: false; code: string; message: string } {
-    if (this.phase !== "lobby") {
-      // Reconnect during match
-      const existing = [...this.seats.values()].find(
-        (s) => s.clientId === clientId || s.displayName === displayName,
-      );
-      // New connections mid-match not allowed without known clientId
-      void existing;
-      return {
-        ok: false,
-        code: "match_running",
-        message: "Match already started",
-      };
+    // Mid-match reconnect via known clientId
+    if (this.phase === "running" || this.phase === "finished") {
+      if (!this.seats.has(clientId)) {
+        return {
+          ok: false,
+          code: "match_running",
+          message: "Match already started",
+        };
+      }
+      const rebound = this.rebind(clientId, send);
+      if (!rebound) {
+        return {
+          ok: false,
+          code: "unknown_seat",
+          message: "Unknown seat",
+        };
+      }
+      send({
+        type: "Welcome",
+        clientId,
+        playerId: this.seats.get(clientId)?.playerId ?? null,
+        capacity: this.capacity,
+      });
+      if (this.phase === "running") {
+        this.sendMatchResync(clientId);
+      }
+      this.lobbyUpdate();
+      return { ok: true };
     }
+
     if (this.seats.has(clientId)) {
       const seat = this.seats.get(clientId)!;
       seat.connected = true;
@@ -163,6 +221,8 @@ export class MatchRoom {
       disconnectedAt: null,
       playerId: null,
       send,
+      intentsThisTurn: 0,
+      rateLimitWarned: false,
     });
     send({
       type: "Welcome",
@@ -188,12 +248,44 @@ export class MatchRoom {
     return true;
   }
 
+  /** Full MatchStart resync for mid-match reconnect. */
+  private sendMatchResync(clientId: ClientId): void {
+    const seat = this.seats.get(clientId);
+    if (
+      !seat?.playerId ||
+      !this.state ||
+      !this.mapPayload ||
+      !this.playersMeta
+    ) {
+      return;
+    }
+    const memory = this.memories.get(seat.playerId);
+    if (!memory) return;
+    const view = buildPlayerView(
+      this.state,
+      seat.playerId,
+      memory,
+      this.config.balance,
+    );
+    this.lastViews.set(seat.playerId, view);
+    seat.send({
+      type: "MatchStart",
+      seed: this.seed,
+      playerId: seat.playerId,
+      clientId: seat.clientId,
+      map: this.mapPayload,
+      seatColors: this.seatColorMap,
+      players: this.playersMeta,
+      roundTicks: this.config.roundTicks(),
+      view,
+    });
+  }
+
   setReady(clientId: ClientId, ready: boolean): void {
     const seat = this.seats.get(clientId);
     if (!seat || this.phase !== "lobby") return;
     seat.ready = ready;
     this.lobbyUpdate();
-    // Auto-start when all seated players ready and >= 2
     if (
       this.seats.size >= 2 &&
       [...this.seats.values()].every((s) => s.ready)
@@ -245,9 +337,13 @@ export class MatchRoom {
     this.config = match.config;
     this.phase = "running";
     this.turnNumber = 0;
+    this.turns = [];
     this.intentBuffer = [];
     this.memories.clear();
+    this.lastViews.clear();
     this.markedDisconnected.clear();
+    this.telemetry = createMatchTelemetry();
+    this.prevEliminated = 0;
 
     const playerIds = Object.keys(this.state.players) as PlayerId[];
     this.seatColorMap = seatColorsForPlayers(playerIds);
@@ -255,12 +351,14 @@ export class MatchRoom {
     for (const s of this.seats.values()) {
       const pid = this.state.clientToPlayer[s.clientId] ?? null;
       s.playerId = pid;
+      s.intentsThisTurn = 0;
+      s.rateLimitWarned = false;
       if (pid) this.memories.set(pid, createVisionMemory());
     }
 
     computeScores(this.game);
 
-    const mapPayload = {
+    this.mapPayload = {
       nodes: Object.fromEntries(
         Object.entries(this.state.map.nodes).map(([id, n]) => [
           id,
@@ -272,7 +370,7 @@ export class MatchRoom {
         : undefined,
     };
 
-    const playersMeta = Object.fromEntries(
+    this.playersMeta = Object.fromEntries(
       Object.values(this.state.players).map((p) => [
         p.id,
         {
@@ -292,14 +390,15 @@ export class MatchRoom {
         memory,
         this.config.balance,
       );
+      this.lastViews.set(s.playerId, view);
       s.send({
         type: "MatchStart",
         seed: this.seed,
         playerId: s.playerId,
         clientId: s.clientId,
-        map: mapPayload,
+        map: this.mapPayload,
         seatColors: this.seatColorMap,
-        players: playersMeta,
+        players: this.playersMeta,
         roundTicks: this.config.roundTicks(),
         view,
       });
@@ -314,6 +413,18 @@ export class MatchRoom {
     const seat = this.seats.get(intent.clientId);
     if (!seat?.connected || !seat.playerId) return;
     if (this.markedDisconnected.has(seat.playerId)) return;
+    if (seat.intentsThisTurn >= this.maxIntentsPerTurn) {
+      if (!seat.rateLimitWarned) {
+        seat.rateLimitWarned = true;
+        seat.send({
+          type: "Error",
+          code: "rate_limited",
+          message: `Max ${this.maxIntentsPerTurn} intents per turn`,
+        });
+      }
+      return;
+    }
+    seat.intentsThisTurn += 1;
     this.intentBuffer.push(intent);
   }
 
@@ -358,24 +469,64 @@ export class MatchRoom {
     if (this.phase !== "running" || !this.state || !this.game) return;
     this.checkDisconnectGrace();
 
+    for (const s of this.seats.values()) {
+      s.intentsThisTurn = 0;
+      s.rateLimitWarned = false;
+    }
+
     const intents = this.intentBuffer;
     this.intentBuffer = [];
     const turn =
       intents.length === 0
         ? emptyTurn(this.turnNumber)
         : { turnNumber: this.turnNumber, intents };
+    this.turns.push(turn);
 
+    const t0 = performance.now();
     const { updates } = executeNextTick(
       this.state,
       turn,
       this.config,
       this.game,
     );
+    const tickMs = performance.now() - t0;
     this.turnNumber += 1;
+
+    accumulateTelemetry(
+      this.telemetry,
+      this.state,
+      updates,
+      tickMs,
+      this.prevEliminated,
+    );
+    this.prevEliminated = Object.values(this.state.players).filter(
+      (p) => p.eliminated,
+    ).length;
+
+    if (this.telemetryPath) {
+      try {
+        appendFileSync(
+          this.telemetryPath,
+          JSON.stringify({
+            tick: this.state.tick,
+            tickMs,
+            combats: updates.combats.length,
+            annex: updates.annexations.length,
+            alive: this.telemetry.alivePlayers,
+            snowball: this.telemetry.snowballRatio,
+          }) + "\n",
+        );
+      } catch {
+        /* ignore write errors */
+      }
+    }
 
     const includeRanks =
       this.state.tick % 10 === 0 || this.state.status === "finished";
     const ranks = includeRanks ? this.buildRanks() : undefined;
+    const sendFull =
+      this.state.tick % this.fullSnapshotEvery === 0 ||
+      this.state.status === "finished";
 
     this.broadcast({ type: "Turn", turn });
 
@@ -389,12 +540,24 @@ export class MatchRoom {
         memory,
         this.config.balance,
       );
-      s.send({
-        type: "TickUpdate",
-        view,
-        events: updates,
-        ...(ranks ? { ranks } : {}),
-      });
+      const prev = this.lastViews.get(s.playerId);
+      this.lastViews.set(s.playerId, view);
+
+      if (sendFull || !prev) {
+        s.send({
+          type: "TickUpdate",
+          full: view,
+          events: updates,
+          ...(ranks ? { ranks } : {}),
+        });
+      } else {
+        s.send({
+          type: "TickUpdate",
+          delta: diffPlayerView(prev, view),
+          events: updates,
+          ...(ranks ? { ranks } : {}),
+        });
+      }
     }
 
     if (this.state.status === "finished") {
@@ -433,3 +596,13 @@ export class MatchRoom {
     return this.state;
   }
 }
+
+type MatchStartMessageMap = {
+  nodes: Record<string, { id: string; role: string; neighbors: string[] }>;
+  layout?: Record<string, { x: number; y: number }>;
+};
+
+type MatchStartPlayers = Record<
+  PlayerId,
+  { id: PlayerId; displayName: string; homeworldId: string | null }
+>;

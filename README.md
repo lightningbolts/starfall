@@ -2,7 +2,7 @@
 
 Space territory conquest on a **graph** (systems = nodes, lanes = edges). Easy to learn, high skill ceiling, 15–30 minute rounds, targeting 50–100 player FFA.
 
-**Current status:** Phase 2 — local multiplayer (`packages/server` + `apps/web` on top of `packages/sim`).
+**Current status:** Phase 3–4 — FFA skeleton + tune hooks (`packages/server` + `apps/web` + telemetry).
 
 ## Quick start
 
@@ -12,12 +12,13 @@ npm exec --yes pnpm@9.15.0 install
 npm exec --yes pnpm@9.15.0 test
 ```
 
-### Local multiplayer (Phase 2)
+### Local multiplayer
 
-Terminal 1 — authoritative match host:
+Terminal 1 — authoritative match host (default capacity **100**):
 
 ```bash
 npm exec --yes pnpm@9.15.0 server -- --seed 42 --ticks 3600
+# optional: --players 8 for a small lobby; --telemetry out.jsonl
 ```
 
 Terminal 2 — web client (proxies `/ws` to the server):
@@ -28,10 +29,20 @@ npm exec --yes pnpm@9.15.0 web
 
 Open two browser tabs to `http://localhost:5173`, join with different names, Ready both (or host Start). Short rounds default to **3600 ticks** (~6 min); pass `--ticks 12000` for a full 20-minute round.
 
+Client `clientId` is persisted in `localStorage` for reconnect. Diplomacy: propose from the ranks list or selected enemy node; accept/break in the Diplomacy panel.
+
 LAN: build the client (`pnpm --filter @starfall/web build`) then serve it from the server:
 
 ```bash
 npm exec --yes pnpm@9.15.0 server -- --static apps/web/dist --port 8787
+```
+
+Metrics while a match runs: `http://localhost:8787/metrics`
+
+### Load smoke (Phase 3)
+
+```bash
+npm exec --yes pnpm@9.15.0 load
 ```
 
 ### Headless bot FFA (Phase 1)
@@ -39,6 +50,8 @@ npm exec --yes pnpm@9.15.0 server -- --static apps/web/dist --port 8787
 ```bash
 npm exec --yes pnpm@9.15.0 sim:ffa -- --seed 42 --players 8 --ticks 12000
 ```
+
+Prints a telemetry summary at the end (combat sizes, annex rates, snowball ratio).
 
 ## Design goals
 
@@ -58,6 +71,6 @@ npm exec --yes pnpm@9.15.0 sim:ffa -- --seed 42 --players 8 --ticks 12000
 
 - TypeScript monorepo (pnpm): `packages/sim` (pure Intent/Execution tick engine), `packages/server` (WebSocket host), `apps/web` (Canvas map), `apps/cli` (bot FFA)
 - OpenFront-style loop: **100ms** turns/ticks, `executeNextTick`
-- Authoritative server sim + fogged `PlayerView` (ADR 002)
+- Authoritative server sim + fogged `PlayerView` deltas (ADR 002)
 
 See [docs/adr/001-tick-engine.md](./docs/adr/001-tick-engine.md) and [docs/adr/002-multiplayer-architecture.md](./docs/adr/002-multiplayer-architecture.md).

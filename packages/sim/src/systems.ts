@@ -611,8 +611,12 @@ function runAnnexations(game: Game): void {
         const stillOwns = Object.values(game.state.nodes).some(
           (n) => n.ownerId === prev,
         );
-        if (!stillOwns && prevPlayer) {
+        if (!stillOwns && prevPlayer && !prevPlayer.eliminated) {
           prevPlayer.eliminated = true;
+          const attacker = game.state.players[fleet.ownerId];
+          if (attacker) {
+            attacker.bonusScore += game.balance.score.eliminationBonus;
+          }
         }
       }
     }

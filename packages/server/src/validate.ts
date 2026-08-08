@@ -108,7 +108,7 @@ export function parseIntent(raw: unknown): Intent | null {
 }
 
 export function parseClientMessage(raw: unknown):
-  | { type: "Hello"; displayName: string }
+  | { type: "Hello"; displayName: string; clientId?: string }
   | { type: "SetReady"; ready: boolean }
   | { type: "StartMatch" }
   | { type: "Intent"; sequence: number; intent: Intent }
@@ -119,7 +119,15 @@ export function parseClientMessage(raw: unknown):
       if (!isString(raw.displayName)) return null;
       const name = raw.displayName.trim().slice(0, 24);
       if (name.length < 1) return null;
-      return { type: "Hello", displayName: name };
+      const out: { type: "Hello"; displayName: string; clientId?: string } = {
+        type: "Hello",
+        displayName: name,
+      };
+      if (raw.clientId !== undefined) {
+        if (!isString(raw.clientId) || raw.clientId.length < 8) return null;
+        out.clientId = raw.clientId;
+      }
+      return out;
     }
     case "SetReady":
       if (typeof raw.ready !== "boolean") return null;

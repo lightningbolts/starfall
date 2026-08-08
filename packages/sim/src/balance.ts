@@ -50,6 +50,8 @@ export interface BalanceTable {
     per10Population: number;
     per100FleetPower: number;
     perTech: number;
+    /** Awarded to the capturing player when they eliminate another. */
+    eliminationBonus: number;
   };
   tech: {
     advanced_propulsion: { ticksPerHopFactor: number };
@@ -199,6 +201,7 @@ export const DEFAULT_BALANCE: BalanceTable = {
     per10Population: 1,
     per100FleetPower: 2,
     perTech: 5,
+    eliminationBonus: 50,
   },
   tech: {
     advanced_propulsion: { ticksPerHopFactor: 0.8 },

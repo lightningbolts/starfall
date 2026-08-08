@@ -92,3 +92,4 @@ score,per_10_credits,1,points,
 score,per_10_population,1,points,
 score,per_100_fleet_power,2,points,
 score,per_tech,5,points,
+score,elimination_bonus,50,points,awarded to capturer on knock-out

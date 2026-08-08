@@ -37,15 +37,29 @@ export function startServer(opts: ServerOptions = {}): {
     : resolveStaticDefault();
 
   const httpServer = createHttpServer((req, res) => {
-    if (!staticDir || !req.url) {
+    const urlPath = decodeURIComponent((req.url ?? "/").split("?")[0] ?? "/");
+
+    if (urlPath === "/metrics") {
+      res.writeHead(200, {
+        "content-type": "application/json; charset=utf-8",
+        "access-control-allow-origin": "*",
+      });
+      res.end(JSON.stringify(room.getTelemetry(), null, 2));
+      return;
+    }
+
+    if (!staticDir) {
       res.writeHead(200, { "content-type": "text/plain" });
       res.end("Starfall server — connect via WebSocket\n");
       return;
     }
-    const urlPath = decodeURIComponent(req.url.split("?")[0] ?? "/");
     let rel = urlPath === "/" ? "/index.html" : urlPath;
     const filePath = normalize(join(staticDir, rel));
-    if (!filePath.startsWith(staticDir) || !existsSync(filePath) || !statSync(filePath).isFile()) {
+    if (
+      !filePath.startsWith(staticDir) ||
+      !existsSync(filePath) ||
+      !statSync(filePath).isFile()
+    ) {
       const fallback = join(staticDir, "index.html");
       if (existsSync(fallback)) {
         res.writeHead(200, { "content-type": MIME[".html"] });
@@ -57,7 +71,9 @@ export function startServer(opts: ServerOptions = {}): {
       return;
     }
     const ext = extname(filePath);
-    res.writeHead(200, { "content-type": MIME[ext] ?? "application/octet-stream" });
+    res.writeHead(200, {
+      "content-type": MIME[ext] ?? "application/octet-stream",
+    });
     res.end(readFileSync(filePath));
   });
 
@@ -83,7 +99,11 @@ export function startServer(opts: ServerOptions = {}): {
       }
       const msg = parseClientMessage(parsed);
       if (!msg) {
-        send({ type: "Error", code: "bad_message", message: "Invalid message" });
+        send({
+          type: "Error",
+          code: "bad_message",
+          message: "Invalid message",
+        });
         return;
       }
 
@@ -98,7 +118,9 @@ export function startServer(opts: ServerOptions = {}): {
           });
           return;
         }
-        clientId = randomUUID();
+
+        // Prefer persisted clientId so reconnect / reload keeps the seat.
+        clientId = msg.clientId ?? randomUUID();
         const result = room.join(clientId, msg.displayName, send);
         if (!result.ok) {
           send({ type: "Error", code: result.code, message: result.message });
@@ -110,7 +132,11 @@ export function startServer(opts: ServerOptions = {}): {
       }
 
       if (!clientId || !joined) {
-        send({ type: "Error", code: "hello_first", message: "Send Hello first" });
+        send({
+          type: "Error",
+          code: "hello_first",
+          message: "Send Hello first",
+        });
         return;
       }
 
@@ -141,8 +167,7 @@ export function startServer(opts: ServerOptions = {}): {
     httpServer.once("error", reject);
     httpServer.listen(port, () => {
       const addr = httpServer.address();
-      boundPort =
-        addr && typeof addr === "object" ? addr.port : port;
+      boundPort = addr && typeof addr === "object" ? addr.port : port;
       resolve(boundPort);
     });
   });

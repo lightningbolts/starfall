@@ -232,6 +232,21 @@ export class MapRenderer {
         state.ownershipPulse.set(id, Math.max(0, pulse - dt * 1.8));
       }
 
+      // Undefended high-value (owner-only): L≥3, no friendly fleet
+      if (
+        !fogged &&
+        ownerId === state.selfId &&
+        level >= 3 &&
+        !hasFriendlyFleetAt(state.view, state.selfId, id)
+      ) {
+        const dangerPulse = 0.35 + 0.35 * Math.sin(performance.now() / 400);
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y, worldR + 0.08, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(196,92,74,${dangerPulse})`;
+        ctx.lineWidth = 0.07;
+        ctx.stroke();
+      }
+
       if (state.selectedNode === id) {
         ctx.beginPath();
         ctx.arc(pos.x, pos.y, worldR + 0.12, 0, Math.PI * 2);
@@ -350,6 +365,18 @@ function roleGlyph(role: string): string {
 function fleetKey(f: Fleet): string {
   if (f.location.kind === "node") return `n:${f.location.nodeId}`;
   return `t:${f.location.from}:${f.location.to}`;
+}
+
+function hasFriendlyFleetAt(
+  view: PlayerView,
+  selfId: PlayerId,
+  nodeId: NodeId,
+): boolean {
+  for (const f of Object.values(view.fleets)) {
+    if (f.ownerId !== selfId) continue;
+    if (f.location.kind === "node" && f.location.nodeId === nodeId) return true;
+  }
+  return false;
 }
 
 function fleetWorldPos(

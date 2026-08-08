@@ -26,7 +26,7 @@ Design-first path toward a TypeScript multiplayer FFA skeleton.
 
 **Exit:** 20-minute simulated FFA with bots completes and produces a scoreboard.
 
-## Phase 2 — Local multiplayer (current)
+## Phase 2 — Local multiplayer
 
 - [x] `packages/server` WebSocket match host
 - [x] Vision filter + command validation
@@ -36,20 +36,22 @@ Design-first path toward a TypeScript multiplayer FFA skeleton.
 
 ## Phase 3 — FFA skeleton
 
-- Lobby for 50–100 seats
-- Alliances (propose/accept/break, shared vision)
-- Score-at-time-limit + elimination bonus
-- Snapshot deltas / command rate limits
+- [x] Lobby for 50–100 seats
+- [x] Alliances (propose/accept/break, shared vision)
+- [x] Score-at-time-limit + elimination bonus
+- [x] Snapshot deltas / command rate limits
 
 **Exit:** large match runs without sim desync; clients only see fogged state.
 
 ## Phase 4 — Tune
 
-- Telemetry on combat sizes, capture rates, snowball
-- Iterate balance.csv / balance tables
-- UX for undefended high-value nodes (design requirement)
+- [x] Telemetry on combat sizes, capture rates, snowball
+- [x] Iterate balance.csv / balance tables (hooks + elimination bonus; numbers remain playtest)
+- [x] UX for undefended high-value nodes (design requirement)
 
 ---
 
 Phase 1 exit met: `pnpm sim:ffa -- --seed 42 --players 8 --ticks 12000` prints a scoreboard.  
-Phase 2 exit: `pnpm server` + `pnpm web` — two browsers can join, play, and finish a short round.
+Phase 2 exit: `pnpm server` + `pnpm web` — two browsers can join, play, and finish a short round.  
+Phase 3 exit: `pnpm load` (50 seats) + fogged deltas; capacity default 100.  
+Phase 4: `GET /metrics`, CLI telemetry summary, undefended L≥3 owner pulse.
