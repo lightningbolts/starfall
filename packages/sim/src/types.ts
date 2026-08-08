@@ -108,6 +108,8 @@ export type Intent =
       fleetId: FleetId;
       path: NodeId[];
       composition?: FleetComposition;
+      /** When true, do not auto-embark population (ships-only raid). */
+      raidOnly?: boolean;
     }
   | { type: "CancelMove"; fleetId: FleetId }
   | {

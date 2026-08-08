@@ -152,8 +152,8 @@ app.innerHTML = `
           <ol class="help-list">
             <li><strong>You</strong> are the amber-ringed homeworld.</li>
             <li><strong>Move:</strong> select a system with your ships, then click where to go. The fleet routes along the lanes.</li>
-            <li><strong>Claim:</strong> click an enemy or neutral system — if you have enough population at your fleet’s system, colonists embark automatically and capture on arrival. Ships alone never flip ownership.</li>
-            <li><strong>Raid only:</strong> hold <kbd>Alt</kbd> while clicking to send ships without loading colonists.</li>
+            <li><strong>Claim:</strong> select your fleet, then click an enemy or neutral system. Population embarks automatically and captures on arrival if it beats the garrison. Ships alone never flip ownership.</li>
+            <li><strong>Raid only:</strong> hold <kbd>Alt</kbd> while clicking to send ships without colonists.</li>
             <li><strong>Build</strong> fighters at home; cruisers need a shipyard. <strong>Credits</strong> buy ships, tech and upgrades. <strong>Pop</strong> only buys territory.</li>
             <li><strong>Grow income:</strong> capture resource nodes for cargo credits, core worlds for population, then press <em>Upgrade</em> on those systems — rates show under Credits / Pop and on the selected system.</li>
           </ol>
@@ -162,7 +162,7 @@ app.innerHTML = `
             <div><dt><kbd>Tab</kbd></dt><dd>Cycle fleets here</dd></div>
             <div><dt><kbd>B</kbd></dt><dd>Build fighter</dd></div>
             <div><dt><kbd>U</kbd></dt><dd>Upgrade system</dd></div>
-            <div><dt><kbd>C</kbd></dt><dd>Load for claim</dd></div>
+            <div><dt><kbd>C</kbd></dt><dd>Pre-load colonists</dd></div>
             <div><dt><kbd>Alt</kbd>+click</dt><dd>Raid without colonists</dd></div>
             <div><dt><kbd>H</kbd></dt><dd>Jump to homeworld</dd></div>
             <div><dt><kbd>T</kbd></dt><dd>Tech panel</dd></div>
@@ -508,50 +508,10 @@ renderer.bindPanZoom((nodeId, mods) => {
     return;
   }
   const full = [...pathPreview, ...tail.slice(1)];
-  // Claim by default when leaving for foreign/neutral land; Alt = ships-only raid.
-  if (!mods.alt) maybeAutoEmbark(nodeId);
-  sendMove(full);
+  // Colonists auto-embark on the server for claim moves; Alt = ships-only raid.
+  sendMove(full, mods.alt);
   selectNode(selectedNode);
 });
-
-/**
- * Embark population before a claim move when the destination is not ours and
- * we can actually beat its garrison. Alt-click skips this (raid only).
- */
-function maybeAutoEmbark(targetId: NodeId): void {
-  if (!view || !match || !selectedFleetId || !selectedNode) return;
-  const fleet = view.fleets[selectedFleetId];
-  if (!fleet) return;
-  if ((fleet.invasionPopulation ?? 0) > 0) return;
-
-  const dest = view.nodes[targetId];
-  // Unknown / fogged destinations are still claimable — embark what we have.
-  if (dest && !isFoggedNode(dest) && dest.ownerId === view.self.id) return;
-
-  const src = view.nodes[selectedNode];
-  if (!src || isFoggedNode(src) || src.ownerId !== view.self.id) return;
-  const available = src.population;
-  if (available < 1) return;
-
-  let amount = available;
-  if (dest && !isFoggedNode(dest)) {
-    const role = match.map.nodes[targetId]?.role;
-    if (role) {
-      const needed = garrisonForRole(role, dest.level ?? 1, null) + 1;
-      // Only auto-load when we can actually take it; otherwise leave pop home
-      // so a ship-only raid doesn't burn colonists for nothing.
-      if (available < needed) return;
-      amount = needed;
-    }
-  }
-
-  net.intent({
-    type: "CommitInvasion",
-    fleetId: selectedFleetId,
-    fromNodeId: selectedNode,
-    population: amount,
-  });
-}
 
 window.addEventListener("keydown", (e) => {
   if (!match || !view) return;
@@ -626,7 +586,7 @@ function clickAction(key: string): void {
   else flashIllegal();
 }
 
-function sendMove(path: NodeId[]): void {
+function sendMove(path: NodeId[], raidOnly = false): void {
   if (!selectedFleetId || path.length < 2 || !view) return;
   const fleet = view.fleets[selectedFleetId];
   if (!fleet) return;
@@ -635,6 +595,7 @@ function sendMove(path: NodeId[]): void {
     type: "MoveFleet",
     fleetId: selectedFleetId,
     path: [...path],
+    ...(raidOnly ? { raidOnly: true } : {}),
   };
   if (pct < 0.999) {
     const composition: Record<string, number> = {};
@@ -651,6 +612,7 @@ function sendMove(path: NodeId[]): void {
       fleetId: selectedFleetId,
       path: [...path],
       composition,
+      ...(raidOnly ? { raidOnly: true } : {}),
     };
   }
   net.intent(intent);
@@ -729,6 +691,7 @@ function beginMatch(msg: MatchStartMessage): void {
   lastDiploKey = "";
   lastRanksKey = "";
   lastStripKey = "";
+  lastActionKey = "";
   updateHud();
   updateTech();
   updateStrip();
@@ -808,6 +771,7 @@ let lastTechKey = "";
 let lastDiploKey = "";
 let lastRanksKey = "";
 let lastStripKey = "";
+let lastActionKey = "";
 let lastResearchedCount = 0;
 
 function updateHud(): void {
@@ -1082,8 +1046,9 @@ function updateStrip(): void {
     strip.classList.add("hidden");
     tip.classList.remove("hidden");
     tip.textContent =
-      "Select your ships, then click a system to move. Claiming enemy land auto-loads colonists — press ? for help.";
+      "Select your ships, then click a system to move. Claiming takes colonists with you — press ? for help.";
     lastStripKey = "";
+    lastActionKey = "";
     return;
   }
 
@@ -1092,13 +1057,13 @@ function updateStrip(): void {
   if (!gn) {
     strip.classList.add("hidden");
     lastStripKey = "";
+    lastActionKey = "";
     return;
   }
 
   strip.classList.remove("hidden");
   tip.classList.add("hidden");
 
-  // Unexplored: topology only. Roles and owners stay hidden (visuals.md fog).
   const unknown = vn === undefined;
   const fogged = !unknown && isFoggedNode(vn);
   const role = (unknown ? "unknown" : fogged ? vn.role : gn.role) as NodeRole;
@@ -1125,7 +1090,9 @@ function updateStrip(): void {
   const powerHere = fleet ? fleetPower(fleet.composition, BAL) : 0;
   const queue = !unknown && !fogged ? vn.buildQueue : [];
 
-  const stripKey = [
+  // Do not rebuild action buttons when only build-progress ticks change —
+  // wiping the DOM every 100ms ate clicks between Build / Upgrade / Load.
+  const actionKey = [
     selectedNode,
     selectedFleetId,
     fleetsHere.length,
@@ -1137,15 +1104,17 @@ function updateStrip(): void {
     powerHere,
     unknown,
     fogged,
-    queue.map((b) => `${b.shipType}:${b.progressTicks}`).join(","),
+    queue.map((b) => `${b.shipType}:${b.count}`).join(","),
     splitInput.value,
     garrisonShown,
-    // Researching heavy_warships must reveal the battleship button immediately.
     view.self.researched.slice().sort().join(","),
     pathPreview.length,
+    fleet?.location.kind ?? "",
   ].join("|");
-  if (stripKey === lastStripKey) return;
-  lastStripKey = stripKey;
+
+  const displayKey = `${actionKey}|${queue.map((b) => b.progressTicks).join(",")}`;
+  if (displayKey === lastStripKey && actionKey === lastActionKey) return;
+  lastStripKey = displayKey;
 
   $("strip-swatch").innerHTML = unknown
     ? '<span class="swatch-unknown">?</span>'
@@ -1227,26 +1196,19 @@ function updateStrip(): void {
   $("strip-stats").innerHTML = stats.join("");
 
   const hint = $("strip-hint");
-  const actions = $("strip-actions");
-  actions.innerHTML = "";
   $("split-row").classList.toggle("hidden", !fleet);
 
   if (unknown) {
     hint.textContent =
       "Nothing known here yet. Move a fleet within vision range to survey it.";
-    return;
-  }
-  if (fogged) {
+  } else if (fogged) {
     hint.textContent =
       "Out of vision — showing last known state. Move closer for live intel.";
-    return;
-  }
-
-  if (!mine) {
+  } else if (!mine) {
     hint.textContent =
       invPop > (garrisonShown ?? 0)
-        ? `Ready to claim: your loaded fleet will take this if colonists beat garrison ${garrisonShown}.`
-        : `To claim: select a system you own with ships + enough Pop, then click here. Colonists embark automatically. Alt-click to raid with ships only.`;
+        ? `Ready to claim: your fleet's colonists beat garrison ${garrisonShown}.`
+        : `Click here with a fleet selected on your land — colonists come along automatically. Alt-click to raid with ships only.`;
   } else if (!selectedFleetId) {
     hint.textContent =
       "No fleet stationed here. Build ships, or select a system where yours are parked.";
@@ -1255,33 +1217,35 @@ function updateStrip(): void {
   } else if (pathPreview.length > 1) {
     hint.textContent = `Route staged over ${pathPreview.length - 1} hops. Click a destination to dispatch, or press Escape to clear.`;
   } else {
-    hint.textContent = `${upgradeBoostLabel(role)}. Click a system to move — enemy/neutral auto-loads colonists when you can claim. Alt-click = ships only.`;
+    hint.textContent = `${upgradeBoostLabel(role)}. Click enemy/neutral land to move and claim — colonists embark automatically. Alt-click = ships only.`;
   }
+
+  if (unknown || fogged) {
+    if (actionKey !== lastActionKey) {
+      lastActionKey = actionKey;
+      $("strip-actions").innerHTML = "";
+    }
+    return;
+  }
+
+  if (actionKey === lastActionKey) return;
+  lastActionKey = actionKey;
+
+  const actions = $("strip-actions");
+  actions.innerHTML = "";
 
   if (mine && (role === "shipyard" || role === "homeworld")) {
     addCostAction(actions, "Build fighter", BAL.ships.fighter.creditCost, credits, {
       key: "build-fighter",
       title: "Queue one fighter",
-      onClick: () =>
-        net.intent({
-          type: "BuildShips",
-          nodeId: selectedNode!,
-          shipType: "fighter",
-          count: 1,
-        }),
+      onClick: () => issueBuild("fighter"),
     });
   }
   if (mine && role === "shipyard") {
     addCostAction(actions, "Build cruiser", BAL.ships.cruiser.creditCost, credits, {
       key: "build-cruiser",
       title: "Shipyards only — heavier warship",
-      onClick: () =>
-        net.intent({
-          type: "BuildShips",
-          nodeId: selectedNode!,
-          shipType: "cruiser",
-          count: 1,
-        }),
+      onClick: () => issueBuild("cruiser"),
     });
     if (researched.has("heavy_warships")) {
       addCostAction(
@@ -1292,13 +1256,7 @@ function updateStrip(): void {
         {
           key: "build-battleship",
           title: "Unlocked by heavy warships",
-          onClick: () =>
-            net.intent({
-              type: "BuildShips",
-              nodeId: selectedNode!,
-              shipType: "battleship",
-              count: 1,
-            }),
+          onClick: () => issueBuild("battleship"),
         },
       );
     }
@@ -1313,7 +1271,7 @@ function updateStrip(): void {
       {
         key: "upgrade",
         title: `Level ${level} → ${level + 1}. ${boost}.`,
-        onClick: () => net.intent({ type: "UpgradeNode", nodeId: selectedNode! }),
+        onClick: () => issueUpgrade(),
       },
     );
   }
@@ -1321,16 +1279,9 @@ function updateStrip(): void {
     const loadPop = nodePop ?? 0;
     addAction(
       actions,
-      loadPop > 0 ? `Load ${loadPop} to claim` : "Load to claim",
-      "Embark this system's population. Usually automatic when you click a claimable target.",
-      () => {
-        net.intent({
-          type: "CommitInvasion",
-          fleetId: selectedFleetId!,
-          fromNodeId: selectedNode!,
-          population: loadPop,
-        });
-      },
+      loadPop > 0 ? `Pre-load ${loadPop}` : "Pre-load",
+      "Optional — population already embarks when you claim-move.",
+      () => issueLoad(loadPop),
       { key: "load", disabled: loadPop < 1 },
     );
   }
@@ -1338,8 +1289,11 @@ function updateStrip(): void {
     addAction(
       actions,
       "Unload colonists",
-      "Cancel the invasion and return population to the nearest owned system",
-      () => net.intent({ type: "CancelInvasion", fleetId: selectedFleetId! }),
+      "Return population to the nearest owned system",
+      () => {
+        net.intent({ type: "CancelInvasion", fleetId: selectedFleetId! });
+        lastActionKey = "";
+      },
       { key: "unload" },
     );
   }
@@ -1370,6 +1324,67 @@ function updateStrip(): void {
       { key: "ally" },
     );
   }
+}
+
+/** Optimistic credit spend so successive strip clicks stay responsive. */
+function spendCreditsLocal(cost: number): boolean {
+  if (!view || view.self.credits < cost) return false;
+  view.self.credits -= cost;
+  $("credits").textContent = String(view.self.credits);
+  lastActionKey = "";
+  lastStripKey = "";
+  return true;
+}
+
+function issueBuild(shipType: ShipType): void {
+  if (!selectedNode || !view) return;
+  const cost = BAL.ships[shipType].creditCost;
+  if (!spendCreditsLocal(cost)) {
+    flashIllegal();
+    return;
+  }
+  net.intent({
+    type: "BuildShips",
+    nodeId: selectedNode,
+    shipType,
+    count: 1,
+  });
+  updateStrip();
+}
+
+function issueUpgrade(): void {
+  if (!selectedNode || !view || !match) return;
+  const gn = match.map.nodes[selectedNode];
+  const vn = view.nodes[selectedNode];
+  if (!gn || !vn || isFoggedNode(vn)) return;
+  const cost = upgradeCost(gn.role as NodeRole, vn.level, BAL);
+  if (!spendCreditsLocal(cost)) {
+    flashIllegal();
+    return;
+  }
+  vn.level += 1;
+  net.intent({ type: "UpgradeNode", nodeId: selectedNode });
+  updateStrip();
+}
+
+function issueLoad(population: number): void {
+  if (!selectedFleetId || !selectedNode || !view || population < 1) return;
+  const vn = view.nodes[selectedNode];
+  const fleet = view.fleets[selectedFleetId];
+  if (!vn || isFoggedNode(vn) || !fleet) return;
+  const take = Math.min(population, vn.population);
+  if (take < 1) return;
+  vn.population -= take;
+  fleet.invasionPopulation = (fleet.invasionPopulation ?? 0) + take;
+  lastActionKey = "";
+  lastStripKey = "";
+  net.intent({
+    type: "CommitInvasion",
+    fleetId: selectedFleetId,
+    fromNodeId: selectedNode,
+    population: take,
+  });
+  updateStrip();
 }
 
 /** Garrison for a role at a level; only apply our techs to systems we own. */
@@ -1437,7 +1452,11 @@ function addAction(
     b.title = title;
   }
   b.disabled = Boolean(opts.disabled);
-  b.addEventListener("click", fn);
+  b.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    fn();
+  });
   parent.appendChild(b);
 }
 

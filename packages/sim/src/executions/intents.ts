@@ -210,6 +210,7 @@ export class MoveFleetExecution implements Execution {
     private fleetId: FleetId,
     path: NodeId[],
     private readonly splitComposition?: FleetComposition,
+    private readonly raidOnly = false,
   ) {
     this.id = nextExecId("move");
     this.path = [...path];
@@ -284,6 +285,10 @@ export class MoveFleetExecution implements Execution {
       }
     }
 
+    // Claim moves auto-embark population from the departure system so players
+    // don't need a separate Load step. raidOnly skips this (ships-only raid).
+    this.maybeAutoEmbark(game, fleet);
+
     if (
       isEmptyComposition(movingComp) &&
       !(fleet.invasionPopulation && fleet.invasionPopulation > 0)
@@ -294,6 +299,25 @@ export class MoveFleetExecution implements Execution {
 
     game.moveByFleet.set(this.fleetId, this.id);
     this.startNextHop(game, fleet);
+  }
+
+  /** Pull pop from the current node onto the fleet when heading to foreign land. */
+  private maybeAutoEmbark(game: Game, fleet: Fleet): void {
+    if (this.raidOnly) return;
+    if ((fleet.invasionPopulation ?? 0) > 0) return;
+    if (fleet.location.kind !== "node") return;
+
+    const destId = this.path[this.path.length - 1]!;
+    const dest = game.state.nodes[destId];
+    if (dest?.ownerId === this.playerId) return;
+
+    const fromId = fleet.location.nodeId;
+    const from = game.state.nodes[fromId];
+    if (!from || from.ownerId !== this.playerId || from.population < 1) return;
+
+    const amount = from.population;
+    from.population = 0;
+    fleet.invasionPopulation = amount;
   }
 
   private startNextHop(game: Game, fleet: Fleet): void {
@@ -649,6 +673,7 @@ export function intentToExecution(
         intent.fleetId,
         intent.path,
         intent.composition,
+        intent.raidOnly === true,
       );
     case "CancelMove":
       return new CancelMoveExecution(player.id, intent.fleetId);

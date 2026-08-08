@@ -58,18 +58,21 @@ export function parseIntent(raw: unknown): Intent | null {
       if (!isString(raw.fleetId) || !Array.isArray(raw.path)) return null;
       if (!raw.path.every(isString) || raw.path.length < 2) return null;
       if (!isComposition(raw.composition)) return null;
+      const raidOnly = raw.raidOnly === true;
       if (raw.composition !== undefined) {
         return {
           type: "MoveFleet",
           fleetId: raw.fleetId,
           path: raw.path as string[],
           composition: raw.composition as FleetComposition,
+          ...(raidOnly ? { raidOnly: true } : {}),
         };
       }
       return {
         type: "MoveFleet",
         fleetId: raw.fleetId,
         path: raw.path as string[],
+        ...(raidOnly ? { raidOnly: true } : {}),
       };
     }
     case "CancelMove":
