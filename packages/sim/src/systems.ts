@@ -6,6 +6,7 @@ import {
   effectiveGarrison,
   fleetPower,
   isEmptyComposition,
+  scaleByLevel,
 } from "./helpers.js";
 import { resolveMultiSideCombat, type SidePower } from "./combat.js";
 import type {
@@ -86,22 +87,20 @@ export class EconomyExecution implements Execution {
       if (!player || !gnode) continue;
       const role = gnode.role;
       const rb = game.balance.roles[role];
-      const levelsAbove = Math.max(0, node.level - 1);
 
-      // Credits
+      // Credits — level factors are exponential growth−1 (soft curve).
       if (rb.incomeMode === "bank" && rb.creditsPerPulse > 0) {
-        let credits = rb.creditsPerPulse;
-        if (role === "homeworld" && levelsAbove > 0) {
-          credits = Math.floor(
-            credits * (1 + levelsAbove * rb.creditLevelFactor),
-          );
-        }
-        player.credits += credits;
+        player.credits += scaleByLevel(
+          rb.creditsPerPulse,
+          node.level,
+          rb.creditLevelFactor,
+        );
       } else if (rb.incomeMode === "cargo" && rb.creditsPerPulse > 0) {
-        let cargo = rb.creditsPerPulse;
-        if (levelsAbove > 0 && rb.cargoLevelFactor > 0) {
-          cargo = Math.floor(cargo * (1 + levelsAbove * rb.cargoLevelFactor));
-        }
+        const cargo = scaleByLevel(
+          rb.creditsPerPulse,
+          node.level,
+          rb.cargoLevelFactor,
+        );
         node.cargoStockpile += cargo;
         // Launch cargo ships
         while (node.cargoStockpile >= game.balance.cargoLaunchThreshold) {
@@ -112,23 +111,20 @@ export class EconomyExecution implements Execution {
 
       // Population
       if (rb.populationPerPulse > 0) {
-        let pop = rb.populationPerPulse;
-        if (role === "core_world") {
-          if (levelsAbove > 0) {
-            pop = Math.floor(pop * (1 + levelsAbove * rb.popLevelFactor));
-          }
-          if (player.researched.has("population_efficiency")) {
-            pop = Math.floor(
-              pop * game.balance.tech.population_efficiency.corePopFactor,
-            );
-          }
+        let pop = scaleByLevel(
+          rb.populationPerPulse,
+          node.level,
+          rb.popLevelFactor,
+        );
+        if (role === "core_world" && player.researched.has("population_efficiency")) {
+          pop = Math.max(
+            pop,
+            Math.round(pop * game.balance.tech.population_efficiency.corePopFactor),
+          );
         }
         let cap = rb.populationCap;
-        if (role === "core_world" && levelsAbove > 0) {
-          cap = Math.floor(cap * (1 + levelsAbove * rb.popCapLevelFactor));
-        }
-        if (role === "homeworld") {
-          cap = rb.populationCap; // L1 table; homeworld doesn't scale cap in balance
+        if (cap > 0 && rb.popCapLevelFactor > 0) {
+          cap = scaleByLevel(cap, node.level, rb.popCapLevelFactor);
         }
         node.population = Math.min(cap || Infinity, node.population + pop);
       }

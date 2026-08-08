@@ -36,7 +36,7 @@ cost(tier) = 60 × 2.25^(tier − 1)
 | 2 | **135** |
 | 3 | **304** |
 
-Steeper than node-upgrade growth (1.5): these are permanent empire unlocks.
+Steeper than node-upgrade growth (1.22): these are permanent empire unlocks.
 
 Purchase spends credits immediately; failed purchase (insufficient credits / missing prereq / already owned) → `NoOpExecution`.
 

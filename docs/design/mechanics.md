@@ -112,9 +112,9 @@ Empire-wide unlocks (e.g. Battleships) live on the **tech tree**, not on node le
 cost(n) = base_cost × growth^(n − 1)
 ```
 
-- `growth` = **1.5**
+- `growth` = **1.22** (soft exponential — early upgrades stay cheap; high levels still climb)
 - **No maximum level.** Level is an unbounded integer (1 = newly owned / unupgraded).
-- Early upgrades stay cheap; each further level is a steeper credit commitment via the geometric curve.
+- Output bonuses use the same shape: `base × (1 + factor)^(level − 1)`.
 - Map shows the level as a **number** on the node — [visuals.md](./visuals.md).
 
 ### Capture rule: no penalty on capture

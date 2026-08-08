@@ -102,12 +102,11 @@ export function effectiveGarrison(
 ): number {
   const rb = balance.roles[role];
   const levelsAbove = Math.max(0, node.level - 1);
-  // Base table: garrisonBase + perLevel * levelsAbove
-  let g = rb.garrisonBase + levelsAbove * rb.garrisonPerLevel;
-  // Homeworld also scales garrison +20% per level above 1 (balance.md)
-  if (role === "homeworld" && levelsAbove > 0) {
-    g = Math.floor(g * (1 + levelsAbove * rb.garrisonLevelFactor));
-  }
+  // Soft exponential on the L1 base, plus the flat per-level table.
+  let g = Math.round(
+    rb.garrisonBase * levelScale(node.level, 1 + rb.garrisonLevelFactor),
+  );
+  g += levelsAbove * rb.garrisonPerLevel;
   if (researched) {
     if (researched.has("fortified_colonies")) {
       g = Math.floor(g * balance.tech.fortified_colonies.garrisonFactor);
@@ -129,7 +128,32 @@ export function upgradeCost(
   const target = currentLevel + 1;
   if (target < 2) return 0;
   const base = balance.roles[role].upgradeBaseCost;
-  return Math.floor(base * Math.pow(balance.upgradeGrowth, target - 2));
+  return Math.max(
+    1,
+    Math.round(base * Math.pow(balance.upgradeGrowth, target - 2)),
+  );
+}
+
+/** Exponential level multiplier: growth^(level−1). L1 = 1. */
+export function levelScale(level: number, growth: number): number {
+  const above = Math.max(0, level - 1);
+  if (above === 0 || growth <= 1) return 1;
+  return Math.pow(growth, above);
+}
+
+/**
+ * Scale a base rate by level. `growthMinusOne` of 0.2 → ×1.2 per level
+ * (exponential). Always at least `base` so L1 stays readable.
+ */
+export function scaleByLevel(
+  base: number,
+  level: number,
+  growthMinusOne: number,
+): number {
+  if (base <= 0) return 0;
+  if (growthMinusOne <= 0) return base;
+  const scaled = base * levelScale(level, 1 + growthMinusOne);
+  return Math.max(base, Math.round(scaled));
 }
 
 export function techCost(techId: TechId, balance: BalanceTable): number {
@@ -171,13 +195,13 @@ export function buildTicksRequired(
       Math.floor(ticks * balance.tech.rapid_deployment.buildTicksFactor),
     );
   }
-  // Shipyard levels speed production: +25% progress per level above 1
-  // Implemented as reduced ticks: ticks / (1 + 0.25*(L-1))
+  // Shipyard levels speed production exponentially: ticks / growth^(L-1)
   if (role === "shipyard" && nodeLevel > 1) {
-    const factor =
-      1 +
-      (nodeLevel - 1) * balance.roles.shipyard.buildProgressLevelFactor;
-    ticks = Math.max(1, Math.floor(ticks / factor));
+    const growth = 1 + balance.roles.shipyard.buildProgressLevelFactor;
+    ticks = Math.max(
+      1,
+      Math.round(ticks / levelScale(nodeLevel, growth)),
+    );
   }
   return ticks;
 }
@@ -197,7 +221,8 @@ export interface NodeProduction {
 
 /**
  * Mirrors EconomyExecution pulse math so the HUD can show rates without
- * waiting for the next bank tick.
+ * waiting for the next bank tick. Level factors are exponential growth−1
+ * (0.2 → ×1.2 per level above 1).
  */
 export function nodeProduction(
   role: NodeRole,
@@ -207,72 +232,70 @@ export function nodeProduction(
   balance: BalanceTable,
 ): NodeProduction {
   const rb = balance.roles[role];
-  const levelsAbove = Math.max(0, level - 1);
 
   let bankCredits = 0;
   let cargoCredits = 0;
   if (rb.incomeMode === "bank" && rb.creditsPerPulse > 0) {
-    let credits = rb.creditsPerPulse;
-    if (role === "homeworld" && levelsAbove > 0) {
-      credits = Math.floor(credits * (1 + levelsAbove * rb.creditLevelFactor));
-    }
-    bankCredits = credits;
+    bankCredits = scaleByLevel(
+      rb.creditsPerPulse,
+      level,
+      rb.creditLevelFactor,
+    );
   } else if (rb.incomeMode === "cargo" && rb.creditsPerPulse > 0) {
-    let cargo = rb.creditsPerPulse;
-    if (levelsAbove > 0 && rb.cargoLevelFactor > 0) {
-      cargo = Math.floor(cargo * (1 + levelsAbove * rb.cargoLevelFactor));
-    }
-    cargoCredits = cargo;
+    cargoCredits = scaleByLevel(
+      rb.creditsPerPulse,
+      level,
+      rb.cargoLevelFactor,
+    );
   }
 
   let popCap = rb.populationCap;
-  if (role === "core_world" && levelsAbove > 0) {
-    popCap = Math.floor(popCap * (1 + levelsAbove * rb.popCapLevelFactor));
+  if (popCap > 0 && rb.popCapLevelFactor > 0) {
+    popCap = scaleByLevel(popCap, level, rb.popCapLevelFactor);
   }
-  if (role === "homeworld") popCap = rb.populationCap;
 
   let popGain = 0;
   if (rb.populationPerPulse > 0) {
-    let pop = rb.populationPerPulse;
-    if (role === "core_world") {
-      if (levelsAbove > 0) {
-        pop = Math.floor(pop * (1 + levelsAbove * rb.popLevelFactor));
-      }
-      if (researched?.has("population_efficiency")) {
-        pop = Math.floor(
-          pop * balance.tech.population_efficiency.corePopFactor,
-        );
-      }
+    let pop = scaleByLevel(
+      rb.populationPerPulse,
+      level,
+      rb.popLevelFactor,
+    );
+    if (role === "core_world" && researched?.has("population_efficiency")) {
+      pop = Math.max(
+        pop,
+        Math.round(pop * balance.tech.population_efficiency.corePopFactor),
+      );
     }
     const room = popCap > 0 ? Math.max(0, popCap - population) : pop;
     popGain = Math.min(pop, room);
   }
 
-  const upgradeBoosts = upgradeBoostLabel(role);
   return {
     bankCredits,
     cargoCredits,
     population: popGain,
     populationCap: popCap,
-    upgradeBoosts,
+    upgradeBoosts: upgradeBoostLabel(role),
   };
 }
 
 export function upgradeBoostLabel(role: NodeRole): string {
   switch (role) {
     case "homeworld":
-      return "Raises credit trickle and garrison";
+      return "Upgrade raises credits, pop, and garrison (soft exponential)";
     case "core_world":
-      return "Raises pop growth and pop cap";
+      return "Upgrade raises pop growth, pop cap, and credit trickle";
     case "resource":
+      return "Upgrade raises cargo credit output";
     case "relic":
-      return "Raises cargo credit output";
+      return "Upgrade raises relic cargo output";
     case "shipyard":
-      return "Speeds ship builds";
+      return "Upgrade speeds builds and raises the credit trickle";
     case "relay":
-      return "Raises vision range";
+      return "Upgrade raises vision range and garrison";
     default:
-      return "Raises this system's output";
+      return "Upgrade raises this system's output";
   }
 }
 

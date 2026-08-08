@@ -27,7 +27,7 @@ All values are **starting guesses**. Power-per-credit is near-constant across sh
 ## Upgrade formula
 
 ```
-cost(n) = base_cost × 1.5^(n − 1)   // n = 2, 3, 4, … (uncapped)
+cost(n) = base_cost × 1.22^(n − 1)   // n = 2, 3, 4, … (uncapped)
 ```
 
 Level 1 = newly owned / unupgraded. No max level — only the geometric cost curve limits how high players push.
@@ -82,36 +82,38 @@ Income uses a **1-second pulse** (every 10 ticks) so rates stay integer and read
 
 | Role | Credits / 10 ticks | Destination | Population / 10 ticks | Pop cap (L1) | Ship build slots | Notes |
 |---|---|---|---|---|---|---|
-| Homeworld | 1 | Bank (direct) | 1 | 40 | 0.5 equiv. | Fighters only at 2× build ticks; cap must beat L1 shipyard garrison |
-| Core world | 1 | Bank (direct) | 3 | 40 | 0 | Primary pop |
+| Homeworld | 2 | Bank (direct) | 1 | 40 | 0.5 equiv. | Fighters only at 2× build ticks; cap must beat L1 shipyard garrison |
+| Core world | 2 | Bank (direct) | 3 | 40 | 0 | Primary pop |
 | Resource node | 4 | **Cargo stockpile** | 0 | 0 | 0 | Primary wealth via cargo ships |
-| Shipyard | 1 | Bank (direct) | 0 | 0 | 1 | Queue; levels = build speed only |
+| Shipyard | 2 | Bank (direct) | 0 | 0 | 1 | Queue; levels = build speed + trickle |
 | Relay | 0 | — | 0 | 0 | 0 | Vision |
 | Relic | 10 | **Cargo stockpile** | 0 | 0 | 0 | Wildcard cargo + score |
 
 These match the prior 2s-tick design’s *per-second* economy (resource was 8 / 2s → 4 / s).
 
-### Per-level multipliers (primary output)
+### Per-level multipliers (soft exponential)
 
-| Role | What scales | Per level above 1 |
+Outputs use `base × (1 + factor)^(level − 1)`. Factors are growth−1 (e.g. 0.2 → ×1.2 per level). Costs use the same shape with `upgradeGrowth = 1.22`.
+
+| Role | What scales | Factor (growth−1) |
 |---|---|---|
-| Homeworld | Credits pulse; garrison | +25% credits; +20% garrison |
-| Core world | Pop pulse and cap | +30% pop/pulse; +25% cap |
-| Resource node | Cargo pulse | +35% stockpile per pulse |
-| Shipyard | Build progress per tick | +25% progress (no ship-type unlock) |
-| Relay | Vision | +1 vision hop at L3 and L5 |
-| Relic | Cargo pulse | +30% stockpile |
+| Homeworld | Credits, pop pulse, pop cap, garrison | 0.20 / 0.15 / 0.12 / 0.10 |
+| Core world | Credits, pop pulse, pop cap, garrison | 0.12 / 0.22 / 0.18 / 0.08 |
+| Resource node | Cargo pulse, garrison | 0.25 / 0.08 |
+| Shipyard | Build speed, credit trickle, garrison | 0.20 / 0.12 / 0.08 |
+| Relay | Vision (+1 hop at L2, then every 2 lvls), garrison | vision steps / 0.10 |
+| Relic | Cargo pulse, garrison | 0.22 / 0.10 |
 
-### Upgrade base costs (credits for level 2; then ×1.5)
+### Upgrade base costs (credits for level 2; then ×1.22)
 
 | Role | base_cost (→ L2) |
 |---|---|
-| Homeworld | 50 |
-| Core world | 40 |
-| Resource node | 40 |
-| Shipyard | 60 |
-| Relay | 30 |
-| Relic | 80 |
+| Homeworld | 25 |
+| Core world | 20 |
+| Resource node | 20 |
+| Shipyard | 30 |
+| Relay | 15 |
+| Relic | 40 |
 
 ---
 
@@ -119,12 +121,12 @@ These match the prior 2s-tick design’s *per-second* economy (resource was 8 / 
 
 | Role | Base garrison (L1) | Per level above 1 |
 |---|---|---|
-| Homeworld | 40 | +12 |
-| Core world | 20 | +6 |
-| Resource node | 15 | +5 |
-| Shipyard | 25 | +8 |
-| Relay | 10 | +4 |
-| Relic | 30 | +10 |
+| Homeworld | 40 | +8 (+ soft ×1.1^L on base) |
+| Core world | 20 | +5 (+ soft ×1.08^L on base) |
+| Resource node | 15 | +4 |
+| Shipyard | 25 | +6 |
+| Relay | 10 | +3 |
+| Relic | 30 | +8 |
 
 Then apply techs: Fortified colonies (+25% after role/level), Orbital shielding (+15 flat).
 

@@ -14,13 +14,13 @@ import {
 } from "./vision.js";
 
 describe("relayVisionBonusHops", () => {
-  it("grants +1 at L3 and +2 at L5+", () => {
+  it("grants +1 at L2 and +1 every two levels after", () => {
     expect(relayVisionBonusHops(1)).toBe(0);
-    expect(relayVisionBonusHops(2)).toBe(0);
+    expect(relayVisionBonusHops(2)).toBe(1);
     expect(relayVisionBonusHops(3)).toBe(1);
-    expect(relayVisionBonusHops(4)).toBe(1);
+    expect(relayVisionBonusHops(4)).toBe(2);
     expect(relayVisionBonusHops(5)).toBe(2);
-    expect(relayVisionBonusHops(8)).toBe(2);
+    expect(relayVisionBonusHops(8)).toBe(4);
   });
 });
 

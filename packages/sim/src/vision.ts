@@ -6,12 +6,10 @@ import type {
   PlayerId,
 } from "./types.js";
 
-/** Relay upgrade vision: +1 hop at L3 and again at L5 (from that relay only). */
+/** Relay upgrade vision: +1 hop at L2, then +1 every 2 levels (L4, L6, …). */
 export function relayVisionBonusHops(level: number): number {
-  let bonus = 0;
-  if (level >= 3) bonus += 1;
-  if (level >= 5) bonus += 1;
-  return bonus;
+  if (level < 2) return 0;
+  return Math.floor(level / 2);
 }
 
 function empireVisionHops(

@@ -62,10 +62,14 @@ describe("Lanchester combat", () => {
 });
 
 describe("costs", () => {
-  it("upgrade geometric cost", () => {
-    // L1→L2 = base; L2→L3 = base*1.5
-    expect(upgradeCost("shipyard", 1, DEFAULT_BALANCE)).toBe(60);
-    expect(upgradeCost("shipyard", 2, DEFAULT_BALANCE)).toBe(90);
+  it("upgrade soft exponential cost", () => {
+    // L1→L2 = base; L2→L3 = round(base * 1.22)
+    expect(upgradeCost("shipyard", 1, DEFAULT_BALANCE)).toBe(30);
+    expect(upgradeCost("shipyard", 2, DEFAULT_BALANCE)).toBe(37);
+    // Softer than the old 1.5 curve: L10 is far cheaper than ~38× base.
+    const midGame = upgradeCost("shipyard", 9, DEFAULT_BALANCE);
+    expect(midGame).toBeLessThan(30 * 8);
+    expect(midGame).toBeGreaterThan(30);
   });
 
   it("tech tier costs", () => {

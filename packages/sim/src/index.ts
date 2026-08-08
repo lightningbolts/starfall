@@ -53,6 +53,8 @@ export {
   nodeProduction,
   empireProduction,
   upgradeBoostLabel,
+  levelScale,
+  scaleByLevel,
 } from "./helpers.js";
 
 export {

@@ -6,7 +6,8 @@ pacing,round_minutes_default,20,min,band 15-30
 pacing,round_ticks,12000,ticks,20*60*10
 pacing,target_players,100,count,band 50-100
 pacing,target_nodes,250,count,band 150-300
-upgrade,growth,1.5,multiplier,cost(n)=base*growth^(n-1) uncapped
+upgrade,growth,1.22,multiplier,cost(n)=base*growth^(n-1) soft exponential uncapped
+upgrade,effect_model,exponential,enum,outputs use (1+factor)^(level-1); factors are growth-1
 upgrade,max_level,0,level,0 means uncapped
 upgrade,visual_size_softcap_level,12,level,radius stops growing past this level
 vision,base_hops,1,hops,from each owned node
@@ -48,39 +49,55 @@ ship.battleship,power,120,power,
 ship.battleship,build_ticks,160,ticks,16.0s
 ship.battleship,ticks_per_hop,80,ticks,8.0s per hop
 ship.battleship,requires_tech,heavy_warships,tech_id,
-role.homeworld,credits_per_pulse,1,credits,every 10 ticks
+role.homeworld,credits_per_pulse,2,credits,every 10 ticks
 role.homeworld,population_per_pulse,1,population,every 10 ticks
 role.homeworld,population_cap,40,population,level 1 — must exceed L1 shipyard garrison (25)
 role.homeworld,garrison_base,40,population,level 1
-role.homeworld,garrison_per_level,12,population,added per level above 1
-role.homeworld,upgrade_base_cost,50,credits,cost to reach level 2
-role.core_world,credits_per_pulse,1,credits,
+role.homeworld,garrison_per_level,8,population,added per level above 1
+role.homeworld,upgrade_base_cost,25,credits,cost to reach level 2
+role.homeworld,credit_level_factor,0.2,growth-1,×1.2^level exponential
+role.homeworld,pop_level_factor,0.15,growth-1,
+role.homeworld,pop_cap_level_factor,0.12,growth-1,
+role.homeworld,garrison_level_factor,0.1,growth-1,soft exp on garrison base
+role.core_world,credits_per_pulse,2,credits,
 role.core_world,population_per_pulse,3,population,
 role.core_world,population_cap,40,population,level 1
 role.core_world,garrison_base,20,population,level 1
-role.core_world,garrison_per_level,6,population,
-role.core_world,upgrade_base_cost,40,credits,
+role.core_world,garrison_per_level,5,population,
+role.core_world,upgrade_base_cost,20,credits,
+role.core_world,credit_level_factor,0.12,growth-1,
+role.core_world,pop_level_factor,0.22,growth-1,
+role.core_world,pop_cap_level_factor,0.18,growth-1,
+role.core_world,garrison_level_factor,0.08,growth-1,
 role.resource,credits_per_pulse,4,credits,to cargo stockpile not bank
 role.resource,income_mode,cargo,enum,
 role.resource,population_per_pulse,0,population,
 role.resource,population_cap,0,population,
 role.resource,garrison_base,15,population,
-role.resource,garrison_per_level,5,population,
-role.resource,upgrade_base_cost,40,credits,
-role.shipyard,credits_per_pulse,1,credits,
+role.resource,garrison_per_level,4,population,
+role.resource,upgrade_base_cost,20,credits,
+role.resource,cargo_level_factor,0.25,growth-1,×1.25^level
+role.resource,garrison_level_factor,0.08,growth-1,
+role.shipyard,credits_per_pulse,2,credits,
 role.shipyard,build_slots,1,slots,level 1
 role.shipyard,garrison_base,25,population,
-role.shipyard,garrison_per_level,8,population,
-role.shipyard,upgrade_base_cost,60,credits,
+role.shipyard,garrison_per_level,6,population,
+role.shipyard,upgrade_base_cost,30,credits,
+role.shipyard,credit_level_factor,0.12,growth-1,
+role.shipyard,build_progress_level_factor,0.2,growth-1,build ticks / 1.2^(L-1)
+role.shipyard,garrison_level_factor,0.08,growth-1,
 role.relay,credits_per_pulse,0,credits,
 role.relay,garrison_base,10,population,
-role.relay,garrison_per_level,4,population,
-role.relay,upgrade_base_cost,30,credits,
+role.relay,garrison_per_level,3,population,
+role.relay,upgrade_base_cost,15,credits,
+role.relay,garrison_level_factor,0.1,growth-1,
 role.relic,credits_per_pulse,10,credits,to cargo stockpile not bank
 role.relic,income_mode,cargo,enum,
 role.relic,garrison_base,30,population,
-role.relic,garrison_per_level,10,population,
-role.relic,upgrade_base_cost,80,credits,
+role.relic,garrison_per_level,8,population,
+role.relic,upgrade_base_cost,40,credits,
+role.relic,cargo_level_factor,0.22,growth-1,
+role.relic,garrison_level_factor,0.1,growth-1,
 role.relic,count_per_250_nodes,5,count,band 3-8
 start,credits,80,credits,per player
 start,population,25,population,at homeworld
