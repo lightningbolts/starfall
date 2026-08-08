@@ -182,6 +182,137 @@ export function buildTicksRequired(
   return ticks;
 }
 
+/** Per-second (1 economy pulse) output of a single owned system. */
+export interface NodeProduction {
+  /** Direct credits into the bank this pulse. */
+  bankCredits: number;
+  /** Cargo stockpile this pulse (becomes credits when delivered). */
+  cargoCredits: number;
+  /** Population grown this pulse (0 when already at cap). */
+  population: number;
+  populationCap: number;
+  /** What Upgrade raises for this role — for UI copy. */
+  upgradeBoosts: string;
+}
+
+/**
+ * Mirrors EconomyExecution pulse math so the HUD can show rates without
+ * waiting for the next bank tick.
+ */
+export function nodeProduction(
+  role: NodeRole,
+  level: number,
+  population: number,
+  researched: ReadonlySet<TechId> | null,
+  balance: BalanceTable,
+): NodeProduction {
+  const rb = balance.roles[role];
+  const levelsAbove = Math.max(0, level - 1);
+
+  let bankCredits = 0;
+  let cargoCredits = 0;
+  if (rb.incomeMode === "bank" && rb.creditsPerPulse > 0) {
+    let credits = rb.creditsPerPulse;
+    if (role === "homeworld" && levelsAbove > 0) {
+      credits = Math.floor(credits * (1 + levelsAbove * rb.creditLevelFactor));
+    }
+    bankCredits = credits;
+  } else if (rb.incomeMode === "cargo" && rb.creditsPerPulse > 0) {
+    let cargo = rb.creditsPerPulse;
+    if (levelsAbove > 0 && rb.cargoLevelFactor > 0) {
+      cargo = Math.floor(cargo * (1 + levelsAbove * rb.cargoLevelFactor));
+    }
+    cargoCredits = cargo;
+  }
+
+  let popCap = rb.populationCap;
+  if (role === "core_world" && levelsAbove > 0) {
+    popCap = Math.floor(popCap * (1 + levelsAbove * rb.popCapLevelFactor));
+  }
+  if (role === "homeworld") popCap = rb.populationCap;
+
+  let popGain = 0;
+  if (rb.populationPerPulse > 0) {
+    let pop = rb.populationPerPulse;
+    if (role === "core_world") {
+      if (levelsAbove > 0) {
+        pop = Math.floor(pop * (1 + levelsAbove * rb.popLevelFactor));
+      }
+      if (researched?.has("population_efficiency")) {
+        pop = Math.floor(
+          pop * balance.tech.population_efficiency.corePopFactor,
+        );
+      }
+    }
+    const room = popCap > 0 ? Math.max(0, popCap - population) : pop;
+    popGain = Math.min(pop, room);
+  }
+
+  const upgradeBoosts = upgradeBoostLabel(role);
+  return {
+    bankCredits,
+    cargoCredits,
+    population: popGain,
+    populationCap: popCap,
+    upgradeBoosts,
+  };
+}
+
+export function upgradeBoostLabel(role: NodeRole): string {
+  switch (role) {
+    case "homeworld":
+      return "Raises credit trickle and garrison";
+    case "core_world":
+      return "Raises pop growth and pop cap";
+    case "resource":
+    case "relic":
+      return "Raises cargo credit output";
+    case "shipyard":
+      return "Speeds ship builds";
+    case "relay":
+      return "Raises vision range";
+    default:
+      return "Raises this system's output";
+  }
+}
+
+export interface EmpireProduction {
+  bankCreditsPerSec: number;
+  cargoCreditsPerSec: number;
+  populationPerSec: number;
+}
+
+/** Sum of owned-node pulse rates. 1 pulse = 1 second at default clock. */
+export function empireProduction(
+  nodes: Iterable<{
+    role: NodeRole;
+    level: number;
+    population: number;
+    ownerId: string | null;
+  }>,
+  selfId: string,
+  researched: ReadonlySet<TechId>,
+  balance: BalanceTable,
+): EmpireProduction {
+  let bankCreditsPerSec = 0;
+  let cargoCreditsPerSec = 0;
+  let populationPerSec = 0;
+  for (const n of nodes) {
+    if (n.ownerId !== selfId) continue;
+    const p = nodeProduction(
+      n.role,
+      n.level,
+      n.population,
+      researched,
+      balance,
+    );
+    bankCreditsPerSec += p.bankCredits;
+    cargoCreditsPerSec += p.cargoCredits;
+    populationPerSec += p.population;
+  }
+  return { bankCreditsPerSec, cargoCreditsPerSec, populationPerSec };
+}
+
 export function subtractComposition(
   from: FleetComposition,
   take: FleetComposition,

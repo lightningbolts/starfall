@@ -19,9 +19,12 @@ import {
   TECH_TIER,
   applyPlayerViewDelta,
   effectiveGarrison,
+  empireProduction,
   fleetPower,
   isFoggedNode,
+  nodeProduction,
   techCost,
+  upgradeBoostLabel,
   upgradeCost,
 } from "@starfall/sim";
 import { NetClient, loadStoredClientId, storeClientId } from "./net.js";
@@ -101,9 +104,20 @@ app.innerHTML = `
     <div class="hud">
       <div class="hud-zone zone-tl">
         <div class="stat-bar">
-          <div class="stat"><span>Credits</span><b id="credits">0</b></div>
-          <div class="stat"><span>Pop</span><b id="pop">0</b></div>
-          <div class="stat"><span>Systems</span><b id="systems">0</b></div>
+          <div class="stat">
+            <span>Credits</span>
+            <b id="credits">0</b>
+            <em class="stat-rate" id="credits-rate">+0/s</em>
+          </div>
+          <div class="stat">
+            <span>Pop</span>
+            <b id="pop">0</b>
+            <em class="stat-rate" id="pop-rate">+0/s</em>
+          </div>
+          <div class="stat">
+            <span>Systems</span>
+            <b id="systems">0</b>
+          </div>
         </div>
         <button class="rail-tab" id="diplo-toggle" type="button" aria-expanded="false">
           Diplomacy<span class="badge hidden" id="diplo-badge">0</span>
@@ -141,6 +155,7 @@ app.innerHTML = `
             <li><strong>Claim:</strong> click an enemy or neutral system — if you have enough population at your fleet’s system, colonists embark automatically and capture on arrival. Ships alone never flip ownership.</li>
             <li><strong>Raid only:</strong> hold <kbd>Alt</kbd> while clicking to send ships without loading colonists.</li>
             <li><strong>Build</strong> fighters at home; cruisers need a shipyard. <strong>Credits</strong> buy ships, tech and upgrades. <strong>Pop</strong> only buys territory.</li>
+            <li><strong>Grow income:</strong> capture resource nodes for cargo credits, core worlds for population, then press <em>Upgrade</em> on those systems — rates show under Credits / Pop and on the selected system.</li>
           </ol>
           <h3>Shortcuts</h3>
           <dl class="shortcuts">
@@ -796,19 +811,67 @@ let lastStripKey = "";
 let lastResearchedCount = 0;
 
 function updateHud(): void {
-  if (!view) return;
+  if (!view || !match) return;
   $("credits").textContent = String(view.self.credits);
   let pop = 0;
   let systems = 0;
-  for (const n of Object.values(view.nodes)) {
+  const researched = new Set(view.self.researched);
+  const ownedForProd: {
+    role: NodeRole;
+    level: number;
+    population: number;
+    ownerId: string | null;
+  }[] = [];
+  for (const [id, n] of Object.entries(view.nodes)) {
     if (isFoggedNode(n)) continue;
-    if (n.ownerId === view.self.id) {
-      pop += n.population;
-      systems++;
+    if (n.ownerId !== view.self.id) continue;
+    pop += n.population;
+    systems++;
+    const role = match.map.nodes[id]?.role as NodeRole | undefined;
+    if (role) {
+      ownedForProd.push({
+        role,
+        level: n.level,
+        population: n.population,
+        ownerId: n.ownerId,
+      });
     }
   }
   $("pop").textContent = String(pop);
   $("systems").textContent = String(systems);
+
+  const income = empireProduction(
+    ownedForProd,
+    view.self.id,
+    researched,
+    BAL,
+  );
+  const creditRate = income.bankCreditsPerSec + income.cargoCreditsPerSec;
+  const creditsRateEl = $("credits-rate");
+  creditsRateEl.textContent =
+    creditRate > 0
+      ? income.cargoCreditsPerSec > 0 && income.bankCreditsPerSec > 0
+        ? `+${creditRate}/s · ${income.cargoCreditsPerSec} cargo`
+        : income.cargoCreditsPerSec > 0
+          ? `+${creditRate}/s cargo`
+          : `+${creditRate}/s`
+      : "+0/s";
+  creditsRateEl.title =
+    income.cargoCreditsPerSec > 0
+      ? `${income.bankCreditsPerSec}/s bank + ${income.cargoCreditsPerSec}/s cargo (delivered by freighters)`
+      : "Direct credit income from owned systems";
+  const popRateEl = $("pop-rate");
+  popRateEl.textContent =
+    income.populationPerSec > 0
+      ? `+${income.populationPerSec}/s`
+      : systems > 0
+        ? "capped"
+        : "+0/s";
+  popRateEl.classList.toggle("is-capped", income.populationPerSec === 0 && systems > 0);
+  popRateEl.title =
+    income.populationPerSec > 0
+      ? "Population growth across your systems"
+      : "Population at cap — upgrade core worlds or claim more to grow";
 
   const clock = $("timer");
   if (roundTicks <= 0) {
@@ -1098,13 +1161,43 @@ function updateStrip(): void {
   }`;
 
   const stats: string[] = [];
-  if (nodePop !== null) stats.push(statRow("Pop", String(nodePop)));
+  const prod =
+    !unknown && !fogged
+      ? nodeProduction(
+          role,
+          level,
+          nodePop ?? 0,
+          mine ? researched : null,
+          BAL,
+        )
+      : null;
+
+  if (nodePop !== null) {
+    const cap =
+      prod && prod.populationCap > 0 ? ` / ${prod.populationCap}` : "";
+    const rate =
+      mine && prod
+        ? prod.population > 0
+          ? ` · +${prod.population}/s`
+          : prod.populationCap > 0
+            ? " · capped"
+            : ""
+        : "";
+    stats.push(statRow("Pop", `${nodePop}${cap}${rate}`));
+  }
   if (garrisonShown !== null) {
     stats.push(
       owner
         ? statRow("Garrison", String(garrisonShown))
         : statRow("To claim", `${garrisonShown + 1}+`),
     );
+  }
+  if (mine && prod) {
+    if (prod.bankCredits > 0) {
+      stats.push(statRow("Income", `+${prod.bankCredits}¢/s`));
+    } else if (prod.cargoCredits > 0) {
+      stats.push(statRow("Cargo out", `+${prod.cargoCredits}/s`));
+    }
   }
   if (fleet) {
     stats.push(
@@ -1162,8 +1255,7 @@ function updateStrip(): void {
   } else if (pathPreview.length > 1) {
     hint.textContent = `Route staged over ${pathPreview.length - 1} hops. Click a destination to dispatch, or press Escape to clear.`;
   } else {
-    hint.textContent =
-      "Click a system to move. Clicking enemy/neutral land auto-loads colonists when you can claim it. Alt-click = ships only.";
+    hint.textContent = `${upgradeBoostLabel(role)}. Click a system to move — enemy/neutral auto-loads colonists when you can claim. Alt-click = ships only.`;
   }
 
   if (mine && (role === "shipyard" || role === "homeworld")) {
@@ -1212,6 +1304,7 @@ function updateStrip(): void {
     }
   }
   if (mine) {
+    const boost = upgradeBoostLabel(role);
     addCostAction(
       actions,
       "Upgrade",
@@ -1219,7 +1312,7 @@ function updateStrip(): void {
       credits,
       {
         key: "upgrade",
-        title: `Raise this system to level ${level + 1}`,
+        title: `Level ${level} → ${level + 1}. ${boost}.`,
         onClick: () => net.intent({ type: "UpgradeNode", nodeId: selectedNode! }),
       },
     );

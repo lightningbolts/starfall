@@ -500,6 +500,20 @@ input:focus-visible {
   font-variant-numeric: tabular-nums;
 }
 
+.stat-rate {
+  font-style: normal;
+  font-size: 0.72rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--sf-role-core) 75%, var(--sf-text));
+  letter-spacing: 0.02em;
+}
+
+.stat-rate.is-capped {
+  color: var(--sf-text-dim);
+  font-weight: 500;
+}
+
 /* —— Top-right status + tabs —————————————————————————————————— */
 
 .status-chip {

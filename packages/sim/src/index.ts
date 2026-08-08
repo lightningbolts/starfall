@@ -50,6 +50,9 @@ export {
   upgradeCost,
   techCost,
   canResearch,
+  nodeProduction,
+  empireProduction,
+  upgradeBoostLabel,
 } from "./helpers.js";
 
 export {

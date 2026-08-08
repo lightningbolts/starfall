@@ -54,28 +54,28 @@ interface Tuning {
 
 const TUNING: Record<BotDifficulty, Tuning> = {
   easy: {
-    cadence: 40,
-    attackMargin: 1.6,
-    spendFraction: 0.5,
+    cadence: 55,
+    attackMargin: 2.0,
+    spendFraction: 0.45,
     researches: false,
     defends: false,
     maxPushes: 1,
   },
   normal: {
-    cadence: 20,
-    attackMargin: 1.25,
-    spendFraction: 0.8,
+    cadence: 30,
+    attackMargin: 1.45,
+    spendFraction: 0.65,
+    researches: true,
+    defends: true,
+    maxPushes: 1,
+  },
+  hard: {
+    cadence: 14,
+    attackMargin: 1.2,
+    spendFraction: 0.9,
     researches: true,
     defends: true,
     maxPushes: 2,
-  },
-  hard: {
-    cadence: 10,
-    attackMargin: 1.1,
-    spendFraction: 1,
-    researches: true,
-    defends: true,
-    maxPushes: 3,
   },
 };
 
@@ -581,9 +581,18 @@ function hashPhase(playerId: PlayerId, cadence: number): number {
   return h % cadence;
 }
 
-const DIFFICULTIES: BotDifficulty[] = ["normal", "hard", "normal", "easy"];
+/** Solo lobbies default soft — mostly easy with a rare normal. */
+const DIFFICULTIES: BotDifficulty[] = [
+  "easy",
+  "easy",
+  "easy",
+  "normal",
+  "easy",
+  "easy",
+  "easy",
+];
 
-/** Mixed ladder so a solo lobby is neither a walkover nor a wall. */
+/** Soft ladder for human-vs-AI; hard bots are opt-in via explicit policy. */
 export function policyForBotIndex(i: number): BotDifficulty {
   return DIFFICULTIES[i % DIFFICULTIES.length]!;
 }
