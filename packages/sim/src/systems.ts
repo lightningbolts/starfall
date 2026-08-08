@@ -327,26 +327,39 @@ function fleetsAtNode(game: Game, nodeId: NodeId): Fleet[] {
   );
 }
 
-function resolveNodeCombats(game: Game): void {
-  const nodeIds = new Set<NodeId>();
-  for (const f of Object.values(game.state.fleets)) {
-    if (f.location.kind === "node") nodeIds.add(f.location.nodeId);
-  }
-  for (const nodeId of [...nodeIds].sort()) {
-    const fleets = fleetsAtNode(game, nodeId).filter(
-      (f) => !isEmptyComposition(f.composition),
+type CombatLocation =
+  | { kind: "node"; nodeId: NodeId }
+  | { kind: "lane"; from: NodeId; to: NodeId };
+
+/**
+ * Armed fleets fight. Colonist-only fleets carry no guns but are still present
+ * and interdictable — excluding them made colonist runs untouchable in transit.
+ */
+function combatCandidates(fleets: Fleet[]): Fleet[] {
+  return fleets.filter(
+    (f) => !isEmptyComposition(f.composition) || (f.invasionPopulation ?? 0) > 0,
+  );
+}
+
+function resolveEngagement(
+  game: Game,
+  fleets: Fleet[],
+  location: CombatLocation,
+): void {
+  const engaged = combatCandidates(fleets);
+  if (engaged.length < 2) return;
+  const sides = groupSides(game, engaged);
+  // With fewer than two armed sides there is no Lanchester exchange, but any
+  // unescorted colonists facing a hostile survivor are still run down.
+  let survivors = sides;
+  if (sides.length >= 2) {
+    const res = resolveMultiSideCombat(sides, game.balance, (a, b) =>
+      game.areAllied(a, b),
     );
-    if (fleets.length < 2) continue;
-    const sides = groupSides(game, fleets);
-    if (sides.length < 2) continue;
-    const { survivors, results } = resolveMultiSideCombat(
-      sides,
-      game.balance,
-      (a, b) => game.areAllied(a, b),
-    );
-    for (const r of results) {
+    survivors = res.survivors;
+    for (const r of res.results) {
       game.updates.combats.push({
-        location: { kind: "node", nodeId },
+        location,
         winnerId: r.winnerId,
         loserId: r.loserId,
         winnerPowerBefore: r.winnerPowerBefore,
@@ -355,7 +368,20 @@ function resolveNodeCombats(game: Game): void {
         winnerCompositionAfter: r.winnerCompositionAfter,
       });
     }
-    applyCombatSurvivors(game, fleets, survivors);
+  }
+  applyCombatSurvivors(game, engaged, survivors);
+}
+
+function resolveNodeCombats(game: Game): void {
+  const nodeIds = new Set<NodeId>();
+  for (const f of Object.values(game.state.fleets)) {
+    if (f.location.kind === "node") nodeIds.add(f.location.nodeId);
+  }
+  for (const nodeId of [...nodeIds].sort()) {
+    resolveEngagement(game, fleetsAtNode(game, nodeId), {
+      kind: "node",
+      nodeId,
+    });
   }
 }
 
@@ -364,7 +390,6 @@ function resolveLaneCombats(game: Game): void {
   const byLane = new Map<string, Fleet[]>();
   for (const f of Object.values(game.state.fleets)) {
     if (f.location.kind !== "transit") continue;
-    if (isEmptyComposition(f.composition)) continue;
     const a = f.location.from;
     const b = f.location.to;
     const key = a < b ? `${a}:${b}` : `${b}:${a}`;
@@ -375,26 +400,8 @@ function resolveLaneCombats(game: Game): void {
   for (const [key, fleets] of [...byLane.entries()].sort((a, b) =>
     a[0] < b[0] ? -1 : 1,
   )) {
-    const sides = groupSides(game, fleets);
-    if (sides.length < 2) continue;
-    const { survivors, results } = resolveMultiSideCombat(
-      sides,
-      game.balance,
-      (a, b) => game.areAllied(a, b),
-    );
     const [from, to] = key.split(":") as [string, string];
-    for (const r of results) {
-      game.updates.combats.push({
-        location: { kind: "lane", from, to },
-        winnerId: r.winnerId,
-        loserId: r.loserId,
-        winnerPowerBefore: r.winnerPowerBefore,
-        loserPowerBefore: r.loserPowerBefore,
-        winnerPowerRemaining: r.winnerPowerRemaining,
-        winnerCompositionAfter: r.winnerCompositionAfter,
-      });
-    }
-    applyCombatSurvivors(game, fleets, survivors);
+    resolveEngagement(game, fleets, { kind: "lane", from, to });
   }
 }
 
@@ -431,9 +438,16 @@ function applyCombatSurvivors(
     const surv = survMap.get(ownerId);
     ownerFleets.sort((a, b) => (a.id < b.id ? -1 : 1));
     if (!surv || surv.power <= 0 || isEmptyComposition(surv.composition)) {
+      // No guns left here. Colonists only survive if no hostile did either —
+      // otherwise the escort dying takes the transports with it.
+      const hostileSurvivor = [...survMap.values()].some(
+        (s) =>
+          s.power > 0 &&
+          s.playerId !== ownerId &&
+          !game.areAllied(s.playerId, ownerId),
+      );
       for (const f of ownerFleets) {
-        // Keep empty fleet only if invasion pop remains
-        if (f.invasionPopulation && f.invasionPopulation > 0) {
+        if (!hostileSurvivor && (f.invasionPopulation ?? 0) > 0) {
           f.composition = {};
         } else {
           game.removeFleet(f.id);
@@ -559,13 +573,10 @@ function runAnnexations(game: Game): void {
     );
     if (hostiles.length > 0) continue;
 
-    // Don't annex own nodes
-    if (node.ownerId === fleet.ownerId) {
-      // Unload pop back to node
-      node.population += fleet.invasionPopulation ?? 0;
-      fleet.invasionPopulation = undefined;
-      continue;
-    }
+    // rulings.md §3: colonists ride along until the fleet reaches a system it
+    // does not own. Sitting on friendly ground must not disembark them, or
+    // loading and then moving on a later tick is impossible.
+    if (node.ownerId === fleet.ownerId) continue;
 
     const pop = fleet.invasionPopulation ?? 0;
     const ownerResearched =

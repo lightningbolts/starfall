@@ -12,7 +12,10 @@ import {
   emptyTurn,
   executeNextTick,
   policyForBotIndex,
+  recommendedNodeCount,
   type BotBrain,
+  type CombatResult,
+  type TickUpdates,
   type ClientId,
   type Game,
   type GameState,
@@ -51,6 +54,7 @@ export interface MatchRoomOptions {
   capacity?: number;
   seed?: number;
   roundTicks?: number;
+  /** Nodes per player. Omit to use the sim's density curve for the seat count. */
   nodeCountFactor?: number;
   disconnectGraceMs?: number;
   turnIntervalMs?: number;
@@ -67,17 +71,19 @@ export interface MatchRoomOptions {
 const DEFAULTS = {
   capacity: 100,
   disconnectGraceMs: 60_000,
-  nodeCountFactor: 2.5,
   turnIntervalMs: 100,
   maxIntentsPerTurn: 8,
   fullSnapshotEvery: 50,
   botCount: 0,
 };
 
+/** Recent turns kept for debugging/replay. ~10 minutes at 100ms turns. */
+const TURN_ARCHIVE_LIMIT = 6000;
+
 export class MatchRoom {
   readonly capacity: number;
   readonly disconnectGraceMs: number;
-  readonly nodeCountFactor: number;
+  readonly nodeCountFactor: number | null;
   readonly turnIntervalMs: number;
   readonly maxIntentsPerTurn: number;
   readonly fullSnapshotEvery: number;
@@ -108,7 +114,7 @@ export class MatchRoom {
   constructor(opts: MatchRoomOptions = {}) {
     this.capacity = opts.capacity ?? DEFAULTS.capacity;
     this.disconnectGraceMs = opts.disconnectGraceMs ?? DEFAULTS.disconnectGraceMs;
-    this.nodeCountFactor = opts.nodeCountFactor ?? DEFAULTS.nodeCountFactor;
+    this.nodeCountFactor = opts.nodeCountFactor ?? null;
     this.turnIntervalMs = opts.turnIntervalMs ?? DEFAULTS.turnIntervalMs;
     this.maxIntentsPerTurn =
       opts.maxIntentsPerTurn ?? DEFAULTS.maxIntentsPerTurn;
@@ -127,8 +133,16 @@ export class MatchRoom {
 
   /** Fill lobby with ready AI seats (host remains first human). */
   private seedBots(count: number): void {
-    const n = Math.min(count, Math.max(0, this.capacity - 1));
-    for (let i = 0; i < n; i++) {
+    // Always keep a seat free for the human who has not joined yet.
+    const humans = [...this.seats.values()].filter((s) => !s.isBot).length;
+    const room = Math.max(
+      0,
+      this.capacity - this.seats.size - (humans > 0 ? 0 : 1),
+    );
+    const n = Math.min(count, room);
+    let i = 0;
+    for (let added = 0; added < n; added++) {
+      while (this.seats.has(`bot-${i}`)) i++;
       const clientId = `bot-${i}`;
       this.seats.set(clientId, {
         clientId,
@@ -332,7 +346,7 @@ export class MatchRoom {
     }
   }
 
-  startMatch(requesterId: ClientId): void {
+  startMatch(requesterId: ClientId, botFill = 0): void {
     if (this.phase !== "lobby") return;
     const host = this.hostClientId();
     if (host !== requesterId) {
@@ -343,11 +357,17 @@ export class MatchRoom {
       });
       return;
     }
+    // Solo play: top the lobby up with AI so one human can start immediately.
+    if (botFill > 0) {
+      const humans = [...this.seats.values()].filter((s) => !s.isBot).length;
+      const existingBots = this.seats.size - humans;
+      this.seedBots(Math.max(0, botFill - existingBots));
+    }
     if (this.seats.size < 2) {
       this.seats.get(requesterId)?.send({
         type: "Error",
         code: "need_players",
-        message: "Need at least 2 players",
+        message: "Need at least 2 players — add a bot or wait for someone to join",
       });
       return;
     }
@@ -357,10 +377,13 @@ export class MatchRoom {
       displayName: s.displayName,
     }));
     const playerCount = roster.length;
-    const nodeCount = Math.max(
-      Math.ceil(playerCount * this.nodeCountFactor),
-      playerCount * 2,
-    );
+    const nodeCount =
+      this.nodeCountFactor === null
+        ? recommendedNodeCount(playerCount)
+        : Math.max(
+            Math.ceil(playerCount * this.nodeCountFactor),
+            playerCount * 3,
+          );
 
     const match = createMatch({
       seed: this.seed,
@@ -486,16 +509,29 @@ export class MatchRoom {
     this.intentBuffer.push(intent);
   }
 
+  /**
+   * Seats survive a disconnect in the lobby too, so a browser refresh keeps
+   * host status and ready state instead of silently reshuffling the host.
+   */
   onDisconnect(clientId: ClientId): void {
     const seat = this.seats.get(clientId);
     if (!seat || seat.isBot) return;
     seat.connected = false;
     seat.disconnectedAt = Date.now();
+    seat.send = () => undefined;
+    this.lobbyUpdate();
     if (this.phase === "lobby") {
-      this.seats.delete(clientId);
-      this.lobbyUpdate();
-      return;
+      // Reclaim the seat only if they never come back.
+      setTimeout(() => this.reapLobbySeat(clientId), this.disconnectGraceMs)
+        .unref?.();
     }
+  }
+
+  private reapLobbySeat(clientId: ClientId): void {
+    if (this.phase !== "lobby") return;
+    const seat = this.seats.get(clientId);
+    if (!seat || seat.connected || seat.isBot) return;
+    this.seats.delete(clientId);
     this.lobbyUpdate();
   }
 
@@ -544,7 +580,11 @@ export class MatchRoom {
       intents.length === 0
         ? emptyTurn(this.turnNumber)
         : { turnNumber: this.turnNumber, intents };
+    // Ring buffer: an unbounded archive grows without limit across a long match.
     this.turns.push(turn);
+    if (this.turns.length > TURN_ARCHIVE_LIMIT) {
+      this.turns.splice(0, this.turns.length - TURN_ARCHIVE_LIMIT);
+    }
 
     const t0 = performance.now();
     const { updates } = executeNextTick(
@@ -592,7 +632,8 @@ export class MatchRoom {
       this.state.tick % this.fullSnapshotEvery === 0 ||
       this.state.status === "finished";
 
-    this.broadcast({ type: "Turn", turn });
+    // The raw Turn carries every player's intents, which bypasses fog entirely.
+    // Clients only need their own fogged view, so it is never broadcast.
 
     for (const s of this.seats.values()) {
       if (!s.playerId || !s.connected || s.isBot) continue;
@@ -606,19 +647,20 @@ export class MatchRoom {
       );
       const prev = this.lastViews.get(s.playerId);
       this.lastViews.set(s.playerId, view);
+      const events = filterUpdatesForPlayer(updates, s.playerId, view);
 
       if (sendFull || !prev) {
         s.send({
           type: "TickUpdate",
           full: view,
-          events: updates,
+          events,
           ...(ranks ? { ranks } : {}),
         });
       } else {
         s.send({
           type: "TickUpdate",
           delta: diffPlayerView(prev, view),
-          events: updates,
+          events,
           ...(ranks ? { ranks } : {}),
         });
       }
@@ -659,6 +701,37 @@ export class MatchRoom {
   getStateForTests(): GameState | null {
     return this.state;
   }
+}
+
+/**
+ * Trim tick events to what the receiving player can actually observe. Sending
+ * every combat and annexation on the map leaked enemy activity through fog.
+ */
+function filterUpdatesForPlayer(
+  updates: TickUpdates,
+  playerId: PlayerId,
+  view: PlayerView,
+): TickUpdates {
+  const visible = new Set(view.visibleNodes);
+  const seesLocation = (loc: CombatResult["location"]): boolean =>
+    loc.kind === "node"
+      ? visible.has(loc.nodeId)
+      : visible.has(loc.from) || visible.has(loc.to);
+
+  return {
+    combats: updates.combats.filter(
+      (c) =>
+        c.winnerId === playerId || c.loserId === playerId || seesLocation(c.location),
+    ),
+    annexations: updates.annexations.filter(
+      (a) =>
+        a.attackerId === playerId ||
+        a.previousOwnerId === playerId ||
+        visible.has(a.nodeId),
+    ),
+    // Research is private: you never see what a rival unlocked.
+    researches: updates.researches.filter((r) => r.playerId === playerId),
+  };
 }
 
 type MatchStartMessageMap = {

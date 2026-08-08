@@ -73,8 +73,13 @@ export {
   generateGalaxy,
   validateGalaxy,
   ensureMapLayout,
+  recommendedNodeCount,
+  roleBudget,
+  homeSpacingTarget,
   type GalaxyGenOptions,
   type GeneratedGalaxy,
+  type GalaxyValidation,
+  type RoleBudget,
 } from "./galaxy.js";
 export { computeScores, checkWin } from "./score.js";
 export {
@@ -126,4 +131,5 @@ export {
   policyForBotIndex,
   type BotBrain,
   type BotPolicy,
+  type BotDifficulty,
 } from "./bots.js";

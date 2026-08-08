@@ -145,7 +145,7 @@ export function startServer(opts: ServerOptions = {}): {
         return;
       }
       if (msg.type === "StartMatch") {
-        room.startMatch(clientId);
+        room.startMatch(clientId, Math.min(msg.botCount, room.capacity - 1));
         return;
       }
       if (msg.type === "Intent") {

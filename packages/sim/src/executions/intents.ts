@@ -33,6 +33,31 @@ function nextExecId(kind: string): string {
   return `${kind}_${execSeq}`;
 }
 
+/** BFS outward from `origin` for the closest system owned by `playerId`. */
+function nearestOwnedNode(
+  game: Game,
+  playerId: PlayerId,
+  origin: NodeId,
+): NodeId | null {
+  const nodes = game.state.nodes;
+  const map = game.state.map.nodes;
+  if (nodes[origin]?.ownerId === playerId) return origin;
+  const seen = new Set<NodeId>([origin]);
+  const queue: NodeId[] = [origin];
+  for (let i = 0; i < queue.length; i++) {
+    const cur = queue[i]!;
+    // Sorted so ties between equidistant systems resolve deterministically.
+    const neighbors = [...(map[cur]?.neighbors ?? [])].sort();
+    for (const n of neighbors) {
+      if (seen.has(n)) continue;
+      seen.add(n);
+      if (nodes[n]?.ownerId === playerId) return n;
+      queue.push(n);
+    }
+  }
+  return null;
+}
+
 export class NoOpExecution implements Execution {
   readonly id = nextExecId("noop");
   private active = true;
@@ -443,27 +468,15 @@ export class CancelInvasionExecution implements Execution {
     }
     const pop = fleet.invasionPopulation;
     fleet.invasionPopulation = undefined;
-    // Return to nearest owned node along reverse path / origin
-    let deposit: NodeId | null = null;
-    if (fleet.location.kind === "node") {
-      const n = game.state.nodes[fleet.location.nodeId];
-      if (n?.ownerId === this.playerId) deposit = fleet.location.nodeId;
-    } else {
-      const from = game.state.nodes[fleet.location.from];
-      const to = game.state.nodes[fleet.location.to];
-      if (from?.ownerId === this.playerId) deposit = fleet.location.from;
-      else if (to?.ownerId === this.playerId) deposit = fleet.location.to;
-    }
-    if (!deposit) {
-      // nearest owned
-      const owned = game.ownedNodes(this.playerId);
-      deposit = owned[0] ?? null;
-    }
-    if (deposit) {
-      const n = game.state.nodes[deposit]!;
-      n.population += pop;
-    }
-    // else pop lost
+    // rulings.md §3: colonists return to the nearest owned system, measured in
+    // hops from where the fleet actually is (for transit, from the origin end).
+    const origin =
+      fleet.location.kind === "node"
+        ? fleet.location.nodeId
+        : fleet.location.from;
+    const deposit = nearestOwnedNode(game, this.playerId, origin);
+    if (deposit) game.state.nodes[deposit]!.population += pop;
+    // No reachable owned system: the colonists are lost.
     this.active = false;
   }
   tick(): void {}

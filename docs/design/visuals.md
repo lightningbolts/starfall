@@ -159,12 +159,21 @@ Your nodes at level **≥ 3** with **no friendly fleet**: soft `--sf-danger` pul
 
 ### Fog of war
 
+**Topology is public; state is fogged.** The server sends the full `GalaxyMap` at
+match start, so hiding the graph shape buys no secrecy — it only leaves the
+player staring at empty space with no sense of where the galaxy goes. Unexplored
+systems therefore render as dim ghosts: you can see that a system is *there* and
+how the lanes run, but not its role, owner, level, population, or fleets.
+
 | Knowledge | Render |
 |---|---|
-| Unexplored | Almost no circles; dim dust only; faint lane ghosts optional |
-| Explored, not currently visible | Last-known circle (role fill + symbol + last owner ring + last level number), no live fleets |
-| Visible | Live node + fleets |
+| Unexplored | Dim ghost circle + ghost lane. No role fill, no symbol, no owner ring, no level number |
+| Explored, not currently visible | Last-known circle (role fill + symbol + last owner ring + last level number), desaturated, no live fleets |
+| Visible | Live node + fleets, full saturation |
 | Relic scanning | All relic circles visible (role fill + owner) regardless of hop distance |
+
+The three tiers must be distinguishable at a glance by brightness alone, so the
+frontier between known and unknown space reads without labels.
 
 No fog “cards,” overlays, or stickers on top of the map.
 

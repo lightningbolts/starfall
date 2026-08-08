@@ -9,14 +9,12 @@ describe("galaxy generator", () => {
   it("produces valid galaxy for 8 players", () => {
     const g = generateGalaxy({ seed: 42, playerCount: 8, nodeCount: 40 });
     const v = validateGalaxy(g.map, g.homeworldIds, 8);
-    // Relaxed fallback may soft-fail degree band; hard constraints must hold
+    expect(v.errors).toEqual([]);
     expect(g.homeworldIds).toHaveLength(8);
-    expect(Object.keys(g.map.nodes).length).toBeGreaterThanOrEqual(40);
+    expect(Object.keys(g.map.nodes)).toHaveLength(40);
     for (const hw of g.homeworldIds) {
       expect(g.map.nodes[hw]?.role).toBe("homeworld");
     }
-    // Connected + shipyard access checked loosely
-    expect(v.errors.filter((e) => e.includes("not connected"))).toHaveLength(0);
   });
 });
 

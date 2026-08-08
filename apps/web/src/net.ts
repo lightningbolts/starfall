@@ -58,8 +58,12 @@ export class NetClient {
     this.send({ type: "SetReady", ready });
   }
 
-  startMatch(): void {
-    this.send({ type: "StartMatch" });
+  startMatch(botCount?: number): void {
+    this.send(
+      botCount === undefined
+        ? { type: "StartMatch" }
+        : { type: "StartMatch", botCount },
+    );
   }
 
   intent(intent: Intent): void {

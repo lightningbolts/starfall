@@ -49,6 +49,8 @@ export interface SetReadyMessage {
 
 export interface StartMatchMessage {
   type: "StartMatch";
+  /** Fill empty seats with AI so one human can start alone. */
+  botCount?: number;
 }
 
 export interface LobbyUpdateMessage {

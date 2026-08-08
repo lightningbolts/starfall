@@ -164,7 +164,8 @@ export function buildTicksRequired(
   if (role === "homeworld") {
     ticks = Math.floor(ticks * balance.homeworldFighterBuildTicksFactor);
   }
-  if (researched.has("rapid_deployment")) {
+  // tech-tree.md scopes rapid deployment to shipyards, not every build site.
+  if (role === "shipyard" && researched.has("rapid_deployment")) {
     ticks = Math.max(
       1,
       Math.floor(ticks * balance.tech.rapid_deployment.buildTicksFactor),
