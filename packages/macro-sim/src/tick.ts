@@ -2,6 +2,7 @@ import { runBotDecisions } from "./bots.js";
 import { resolveContestedFronts } from "./combat.js";
 import { applyEconomyTick, decayEmpireModifiers } from "./economy.js";
 import { maybeSpawnRandomEvent } from "./events.js";
+import { emit } from "./log.js";
 import { createRng } from "./rng.js";
 import { buildSnapshot } from "./snapshot.js";
 import type {
@@ -28,10 +29,10 @@ export function stepLogic(state: MacroState, config: MacroConfig): StepResult {
 
   const pulseEvery = Math.max(1, config.economyPulseTicks);
   if (state.tick % pulseEvery === 0) {
-    for (const rid of state.regionOrder) {
-      const region = state.regions[rid]!;
-      const empire = region.ownerId ? state.empires[region.ownerId] : undefined;
-      applyEconomyTick(region, empire, config, rng());
+    for (const sid of state.systemOrder) {
+      const system = state.systems[sid]!;
+      const empire = system.ownerId ? state.empires[system.ownerId] : undefined;
+      applyEconomyTick(system, empire, config, rng());
     }
   }
   for (const eid of state.empireOrder) {
@@ -40,7 +41,10 @@ export function stepLogic(state: MacroState, config: MacroConfig): StepResult {
 
   const botEvery = Math.max(1, config.botCadenceTicks);
   if (state.tick % botEvery === 0) {
-    newEvents.push(...runBotDecisions(state, rng));
+    const diploEvery = Math.max(botEvery, config.diplomacyCadenceTicks);
+    newEvents.push(
+      ...runBotDecisions(state, config, rng, state.tick % diploEvery === 0),
+    );
   }
 
   const combat = resolveContestedFronts(state, config);
@@ -55,13 +59,15 @@ export function stepLogic(state: MacroState, config: MacroConfig): StepResult {
     state.status = "ended";
     if (alive.length === 1) {
       const winner = state.empires[alive[0]!]!;
-      newEvents.push({
-        tick: state.tick,
-        kind: "empire_eliminated",
-        empireIds: [winner.id],
-        regionId: null,
-        text: `${winner.name} stands alone across the galaxy.`,
-      });
+      newEvents.push(
+        emit(state, {
+          tick: state.tick,
+          kind: "empire_eliminated",
+          empireIds: [winner.id],
+          systemId: null,
+          text: `${winner.name} stands alone across the galaxy.`,
+        }),
+      );
     }
   }
 

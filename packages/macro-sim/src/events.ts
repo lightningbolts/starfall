@@ -1,11 +1,12 @@
+import { emit } from "./log.js";
+import { pick } from "./rng.js";
 import type {
   Empire,
   MacroEvent,
   MacroEventKind,
   MacroState,
-  Region,
+  StarSystem,
 } from "./types.js";
-import { pick } from "./rng.js";
 
 interface WeightedKind {
   kind: MacroEventKind;
@@ -32,10 +33,10 @@ export function maybeSpawnRandomEvent(
   const kind = weightedPick(WORLD_EVENTS, rng);
   const empireId = pick(rng, alive);
   const empire = state.empires[empireId]!;
-  const region = pickOwnedRegion(state, empireId, rng);
-  if (!region) return [];
+  const system = pickOwnedSystem(state, empire, rng);
+  if (!system) return [];
 
-  return [applyWorldEvent(state, kind, empire, region, rng)];
+  return [applyWorldEvent(state, kind, empire, system, rng)];
 }
 
 function weightedPick(items: WeightedKind[], rng: () => number): MacroEventKind {
@@ -48,23 +49,26 @@ function weightedPick(items: WeightedKind[], rng: () => number): MacroEventKind 
   return items[items.length - 1]!.kind;
 }
 
-function pickOwnedRegion(
+function pickOwnedSystem(
   state: MacroState,
-  empireId: string,
+  empire: Empire,
   rng: () => number,
-): Region | null {
-  const owned = state.regionOrder.filter(
-    (id) => state.regions[id]!.ownerId === empireId,
-  );
-  if (owned.length === 0) return null;
-  return state.regions[pick(rng, owned)]!;
+): StarSystem | null {
+  const size = empire.ownedSystems.size;
+  if (size === 0) return null;
+  let skip = Math.floor(rng() * size);
+  for (const id of empire.ownedSystems) {
+    if (skip === 0) return state.systems[id]!;
+    skip--;
+  }
+  return null;
 }
 
 function applyWorldEvent(
   state: MacroState,
   kind: MacroEventKind,
   empire: Empire,
-  region: Region,
+  system: StarSystem,
   rng: () => number,
 ): MacroEvent {
   const tick = state.tick;
@@ -72,77 +76,75 @@ function applyWorldEvent(
     case "production_surge": {
       empire.modifiers.productionMult = 1.35 + rng() * 0.25;
       empire.modifiers.productionTicksLeft = 40 + Math.floor(rng() * 40);
-      return {
+      return emit(state, {
         tick,
         kind,
         empireIds: [empire.id],
-        regionId: region.id,
-        text: `${empire.name} reports a production surge in the frontier.`,
-      };
+        systemId: system.id,
+        text: `${empire.name} reports a production surge around ${system.name}.`,
+      });
     }
     case "rebellion": {
-      region.garrison *= 0.55;
-      region.population *= 0.7;
-      if (region.contested) region.contested.pct = Math.min(1, region.contested.pct + 0.2);
-      else if (region.neighbors.some((n) => {
-        const o = state.regions[n]!.ownerId;
-        return o && o !== empire.id;
-      })) {
-        const foe = region.neighbors
-          .map((n) => state.regions[n]!.ownerId)
+      system.garrison *= 0.55;
+      system.population *= 0.7;
+      if (system.contested) {
+        system.contested.pct = Math.min(1, system.contested.pct + 0.2);
+      } else {
+        const foe = system.hyperlanes
+          .map((n) => state.systems[n]!.ownerId)
           .find((o) => o && o !== empire.id);
-        if (foe) region.contested = { vs: foe, pct: 0.25 };
+        if (foe) system.contested = { vs: foe, pct: 0.25 };
       }
-      return {
+      return emit(state, {
         tick,
         kind,
         empireIds: [empire.id],
-        regionId: region.id,
-        text: `Rebellion flares within ${empire.name} space.`,
-      };
+        systemId: system.id,
+        text: `Rebellion flares on ${system.name} against ${empire.name}.`,
+      });
     }
     case "relic_discovery": {
-      region.credits += 80 + rng() * 120;
-      region.population += 40;
+      system.credits += 80 + rng() * 120;
+      system.population += 40;
       empire.modifiers.garrisonMult = 1.2;
       empire.modifiers.garrisonTicksLeft = 50;
-      return {
+      return emit(state, {
         tick,
         kind,
         empireIds: [empire.id],
-        regionId: region.id,
-        text: `${empire.name} uncovers an ancient relic.`,
-      };
+        systemId: system.id,
+        text: `${empire.name} uncovers an ancient relic on ${system.name}.`,
+      });
     }
     case "pirate_raid": {
-      region.credits *= 0.65;
-      region.garrison *= 0.8;
-      return {
+      system.credits *= 0.65;
+      system.garrison *= 0.8;
+      return emit(state, {
         tick,
         kind,
         empireIds: [empire.id],
-        regionId: region.id,
-        text: `Pirates raid a sector held by ${empire.name}.`,
-      };
+        systemId: system.id,
+        text: `Pirates raid ${system.name}, held by ${empire.name}.`,
+      });
     }
     case "disaster": {
-      region.population *= 0.6;
-      region.credits *= 0.75;
-      return {
+      system.population *= 0.6;
+      system.credits *= 0.75;
+      return emit(state, {
         tick,
         kind,
         empireIds: [empire.id],
-        regionId: region.id,
-        text: `A natural disaster devastates territory of ${empire.name}.`,
-      };
+        systemId: system.id,
+        text: `A cataclysm devastates ${system.name} in ${empire.name} space.`,
+      });
     }
     default:
-      return {
+      return emit(state, {
         tick,
         kind,
         empireIds: [empire.id],
-        regionId: region.id,
-        text: `Something stirs in ${empire.name} space.`,
-      };
+        systemId: system.id,
+        text: `Something stirs near ${system.name}.`,
+      });
   }
 }

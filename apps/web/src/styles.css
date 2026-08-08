@@ -1313,10 +1313,17 @@ input:focus-visible {
 
 /* —— Chronicle (macro spectator) ——————————————————————————————— */
 
+/* Chronicle overlays the page, so leaving it restores the lobby underneath. */
+body.chronicle-active > #app {
+  display: none;
+}
+
 .chronicle {
-  position: absolute;
+  position: fixed;
   inset: 0;
+  z-index: 40;
   background: var(--sf-void);
+  overflow: hidden;
 }
 
 #chronicle-map {
@@ -1331,9 +1338,19 @@ input:focus-visible {
 .chronicle-dash {
   position: absolute;
   inset: 0;
+  display: flex;
+  flex-direction: column;
   pointer-events: none;
   z-index: 2;
   font-family: var(--sf-font-body);
+}
+
+/* Panels anchor to the stage, so a wrapped top bar pushes them down instead of
+   overlapping their controls. */
+.chronicle-stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .chronicle-top {
@@ -1382,7 +1399,7 @@ input:focus-visible {
 .chronicle-rail {
   pointer-events: auto;
   position: absolute;
-  top: 3.4rem;
+  top: 0.5rem;
   right: 0.75rem;
   display: flex;
   flex-direction: column;
@@ -1391,10 +1408,6 @@ input:focus-visible {
 
 .chronicle-panel {
   pointer-events: auto;
-  position: absolute;
-  top: 3.4rem;
-  width: min(320px, calc(100vw - 1.5rem));
-  max-height: calc(100vh - 4.2rem);
   overflow: auto;
   padding: 0.65rem 0.7rem;
   background: color-mix(in srgb, var(--sf-void) 78%, transparent);
@@ -1403,26 +1416,54 @@ input:focus-visible {
   backdrop-filter: blur(6px);
 }
 
-.chronicle-panel[data-panel="roster"] {
-  left: 0.75rem;
+.chronicle-panel[hidden],
+.chronicle-panel.hidden {
+  display: none;
 }
 
-.chronicle-panel[data-panel="feed"] {
+/* Roster and feed share the left edge as a column so they cannot overlap. */
+.chronicle-left {
+  position: absolute;
   left: 0.75rem;
-  top: auto;
+  top: 0.5rem;
   bottom: 0.75rem;
-  max-height: 28vh;
+  width: min(340px, calc(100vw - 1.5rem));
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  pointer-events: none;
+  min-height: 0;
+}
+
+/* The row list is the only scroller, so the sort tools and focus row stay put. */
+.chronicle-panel[data-panel="roster"] {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.chronicle-feed-panel {
+  flex: 0 0 auto;
+  max-height: 36%;
+}
+
+.chronicle-panel[data-panel="trends"],
+.chronicle-panel[data-panel="overlays"] {
+  position: absolute;
+  right: 4.6rem;
+  width: min(300px, calc(100vw - 1.5rem));
+  max-height: calc(100% - 1rem);
 }
 
 .chronicle-panel[data-panel="trends"] {
-  right: 4.5rem;
+  top: 0.5rem;
 }
 
 .chronicle-panel[data-panel="overlays"] {
-  right: 4.5rem;
-  top: auto;
   bottom: 0.75rem;
-  width: min(240px, calc(100vw - 1.5rem));
+  width: min(250px, calc(100vw - 1.5rem));
 }
 
 .chronicle-panel h2 {
@@ -1486,6 +1527,10 @@ input:focus-visible {
   display: flex;
   flex-direction: column;
   gap: 0.15rem;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
 }
 
 .ch-roster-row {
@@ -1598,10 +1643,168 @@ input:focus-visible {
   color: var(--sf-self);
 }
 
+.ch-spark-row b {
+  color: var(--sf-text);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.ch-chart {
+  width: 100%;
+  height: 92px;
+  display: block;
+}
+
+.ch-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem 0.55rem;
+  margin-top: 0.4rem;
+  font-size: 0.7rem;
+  color: var(--sf-text-dim);
+}
+
+.ch-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.ch-legend-item i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.ch-legend-item b {
+  color: var(--sf-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.ch-hint {
+  margin: 0.5rem 0 0;
+  font-size: 0.7rem;
+  color: var(--sf-text-dim);
+  line-height: 1.4;
+}
+
+/* —— Map text overlay ————————————————————————————————————————— */
+
+.chronicle-labels {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.ch-map-label {
+  position: absolute;
+  top: 0;
+  left: 0;
+  white-space: nowrap;
+  will-change: transform;
+}
+
+.ch-map-label-empire {
+  font-family: var(--sf-font-display);
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  text-shadow:
+    0 0 10px rgba(7, 9, 13, 0.95),
+    0 1px 2px rgba(7, 9, 13, 0.9);
+}
+
+.ch-map-label-empire.is-focus {
+  text-shadow:
+    0 0 14px rgba(232, 168, 56, 0.5),
+    0 0 8px rgba(7, 9, 13, 0.95);
+}
+
+.ch-map-label-system {
+  font-size: 0.62rem;
+  letter-spacing: 0.03em;
+  color: var(--sf-text-dim);
+  opacity: 0.7;
+  text-shadow: 0 1px 3px rgba(7, 9, 13, 0.95);
+}
+
+.ch-map-label-system.is-owned {
+  color: var(--sf-text);
+  opacity: 0.9;
+}
+
+/* —— Selected system card ————————————————————————————————————— */
+
+.chronicle-selection {
+  pointer-events: auto;
+  position: absolute;
+  bottom: 0.75rem;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(300px, calc(100vw - 1.5rem));
+  padding: 0.55rem 0.65rem;
+  background: color-mix(in srgb, var(--sf-void) 84%, transparent);
+  border: 1px solid var(--sf-hud-border-hi);
+  border-radius: var(--sf-radius);
+  backdrop-filter: blur(6px);
+  font-size: 0.78rem;
+}
+
+.chronicle-selection[hidden] {
+  display: none;
+}
+
+.ch-sel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-family: var(--sf-font-display);
+}
+
+.ch-sel-owner {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0.25rem 0;
+  color: var(--sf-text-dim);
+}
+
+.ch-sel-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem 0.7rem;
+  color: var(--sf-text-dim);
+  font-size: 0.72rem;
+}
+
+.ch-sel-stats b {
+  color: var(--sf-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.ch-sel-front {
+  margin-top: 0.3rem;
+  font-size: 0.72rem;
+  color: var(--sf-danger);
+}
+
 @media (max-width: 800px) {
   .chronicle-panel[data-panel="trends"],
   .chronicle-panel[data-panel="overlays"] {
     right: 0.75rem;
+  }
+
+  /* The rail lies flat across the top here, so panels start below it. */
+  .chronicle-left,
+  .chronicle-panel[data-panel="trends"] {
+    top: 3rem;
+  }
+
+  .chronicle-left {
+    width: min(280px, calc(100vw - 1.5rem));
   }
 
   .chronicle-rail {
@@ -1609,6 +1812,10 @@ input:focus-visible {
     flex-direction: row;
     flex-wrap: wrap;
     max-width: calc(100vw - 1rem);
+  }
+
+  .ch-map-label-system {
+    display: none;
   }
 
   .ch-roster-head,

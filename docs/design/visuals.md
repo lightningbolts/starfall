@@ -1,8 +1,8 @@
 # Starfall — Visual / Graphics Design (Normative)
 
-**Status:** v1 design lock (docs only — no assets or UI code yet)  
+**Status:** v1 design lock  
 **Audience:** `apps/web` implementers and anyone authoring map/HUD chrome  
-**Companions:** [mechanics.md](./mechanics.md) (UX requirements), [tech-tree.md](./tech-tree.md), [domain.md](./domain.md)
+**Companions:** [mechanics.md](./mechanics.md) (UX requirements), [tech-tree.md](./tech-tree.md), [domain.md](./domain.md), [macro-spectator.md](./macro-spectator.md) (Chronicle)
 
 ---
 
@@ -277,3 +277,34 @@ Optional fourth: undefended-node warning pulse (owner-only, already specified).
 - Layout positions come from `GalaxyMap.layout` (sim-agnostic); rendering never feeds back into sim.
 - Seat colors assigned at match start and stay stable for the round.
 - Interpolate render positions client-side; authoritative positions still snap on each `TickUpdate`.
+
+---
+
+## 10. Shared `--sf-*` palette (source of truth)
+
+CSS custom properties in `apps/web/src/styles.css` and the numeric mirrors in
+`apps/web/src/macro/palette.ts` are the **shared source of truth** for both the
+competitive map (`renderer.ts`) and Chronicle (`mapView.ts` + dashboard).
+
+| Token | Hex | Role |
+|---|---|---|
+| `--sf-void` | `#07090d` | Deepest clear / page ink |
+| `--sf-starfield` | `#0c1018` | Lobby / chrome gradient base |
+| `--sf-dust` | `#1a2230` | Panel washes |
+| `--sf-lane` | `#3a4558` | Hyperlane / edge stroke |
+| `--sf-cargo` | `#7aafc4` | Cargo / diplomacy accent |
+| `--sf-unowned` | `#6b7585` | Neutral / unclaimed |
+| `--sf-self` | `#e8a838` | Local player / warm chrome accent |
+| `--sf-focus` | `#f0d080` | Selection / highlight |
+| `--sf-danger` | `#c45c4a` | Contested fronts, warnings |
+| `--sf-combat-flash` | `#f5f2ea` | Capture pulse |
+| `--sf-hud-border` | `#2a3344` | Panel borders |
+
+**Chronicle empire colors** derive from each empire's `colorHue` via
+`empireFill` / `empireAccent` / `empireSwatchCss` in `palette.ts` — the map
+territory rim and the roster swatch must always agree.
+
+**Chronicle map stack** (see [macro-spectator.md](./macro-spectator.md)): seeded
+nebula + parallax starfield → territory coverage field (blobby fills, glowing
+rims, no cell edges) → hyperlanes → contested border quads → star sprites /
+capital rings → diplomacy arcs → DOM name labels.

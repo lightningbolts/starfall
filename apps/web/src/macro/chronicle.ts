@@ -22,22 +22,47 @@ export interface ChronicleLaunchOptions {
   seed?: number;
 }
 
-let active: { stop: () => void } | null = null;
+export interface ChronicleHooks {
+  /** Called when the viewer leaves Chronicle, so the host can show its own UI. */
+  onExit?: () => void;
+}
+
+interface ActiveChronicle {
+  stop: () => void;
+  options: ChronicleLaunchOptions;
+  hooks: ChronicleHooks;
+}
+
+let active: ActiveChronicle | null = null;
+let hashListenerInstalled = false;
 
 export function isChronicleActive(): boolean {
   return active !== null;
 }
 
 export function stopChronicle(): void {
-  active?.stop();
+  const current = active;
   active = null;
+  current?.stop();
+}
+
+/** Leave Chronicle and hand control back to the host page. */
+export function exitChronicle(): void {
+  const hooks = active?.hooks;
+  stopChronicle();
+  if (location.hash.startsWith("#/chronicle")) {
+    history.replaceState(null, "", location.pathname + location.search);
+  }
+  hooks?.onExit?.();
 }
 
 export function startChronicle(
-  app: HTMLElement,
+  host: HTMLElement,
   opts: ChronicleLaunchOptions = {},
+  hooks: ChronicleHooks = {},
 ): void {
   stopChronicle();
+  installHashListener();
 
   const mapSize = opts.mapSize ?? "medium";
   const { state, config, snapshot } = createMacroMatch({
@@ -45,16 +70,27 @@ export function startChronicle(
     mapSize,
   });
 
-  app.innerHTML = `
-    <section class="chronicle" id="chronicle">
-      <canvas id="chronicle-map"></canvas>
-    </section>
-  `;
+  const section = document.createElement("section");
+  section.className = "chronicle";
+  section.id = "chronicle";
+  section.innerHTML = `<canvas id="chronicle-map"></canvas>`;
+  host.appendChild(section);
+  document.body.classList.add("chronicle-active");
 
-  const canvas = app.querySelector<HTMLCanvasElement>("#chronicle-map")!;
-  const section = app.querySelector<HTMLElement>("#chronicle")!;
-  const map = new MacroMapView(canvas);
-  map.setStaticGalaxy(snapshot);
+  const canvas = section.querySelector<HTMLCanvasElement>("#chronicle-map")!;
+  const dashState = createDashboardState();
+  const trends = createTrendHistory();
+
+  const map = new MacroMapView(canvas, section, {
+    onSelectSystem: (systemId) => {
+      dash.setSelectedSystem(systemId);
+      if (systemId) {
+        const owner = next.systems[systemId]?.ownerId ?? null;
+        if (owner) dash.setFocus(owner);
+      }
+    },
+  });
+  map.setGalaxy(snapshot);
 
   let prev: MacroSnapshot = snapshot;
   let next: MacroSnapshot = snapshot;
@@ -62,19 +98,66 @@ export function startChronicle(
   const cfg: MacroConfig = config;
   let logicStartedAt = performance.now();
   let pendingEvents: MacroEvent[] = [];
-  const dashState = createDashboardState();
-  const trends = createTrendHistory();
+
   pushTrends(trends, lerpSnapshot(prev, next, 1));
 
   const dash = new MacroDashboard(section, dashState, trends, () => {
-    /* dashboard mutates dashState in place */
+    // Control changes take effect on the next frame's render options; the
+    // dashboard re-renders itself immediately via `invalidate`.
+    dash.invalidate();
   });
+  dash.setSeedLabel(sim.seed);
+
+  const launchOptions: ChronicleLaunchOptions = { mapSize, seed: sim.seed };
+  writeChronicleHash(launchOptions, true);
 
   dash.root.querySelector("#ch-exit")?.addEventListener("click", () => {
-    stopChronicle();
-    location.hash = "";
-    location.reload();
+    exitChronicle();
   });
+  dash.root.querySelector("#ch-fit")?.addEventListener("click", () => {
+    map.fit();
+  });
+  dash.root.querySelector("#ch-restart")?.addEventListener("click", () => {
+    startChronicle(host, { mapSize }, hooks);
+  });
+
+  const onKey = (e: KeyboardEvent): void => {
+    const target = e.target as HTMLElement | null;
+    if (
+      target &&
+      (target.tagName === "INPUT" ||
+        target.tagName === "SELECT" ||
+        target.tagName === "TEXTAREA")
+    ) {
+      return;
+    }
+    const st = dash.getState();
+    switch (e.key) {
+      case " ":
+        e.preventDefault();
+        st.paused = !st.paused;
+        break;
+      case "1":
+      case "2":
+      case "4":
+        st.speed = Number(e.key) as 1 | 2 | 4;
+        st.paused = false;
+        break;
+      case "f":
+      case "F":
+        map.fit();
+        break;
+      case "Escape":
+        dash.setSelectedSystem(null);
+        dash.setFocus(null);
+        break;
+      default:
+        return;
+    }
+    // Keyboard changes bypass the panel handlers, so push button state manually.
+    dash.refreshChrome();
+  };
+  window.addEventListener("keydown", onKey);
 
   let raf = 0;
   let stopped = false;
@@ -96,12 +179,12 @@ export function startChronicle(
         pushTrends(trends, lerpSnapshot(prev, next, 1, (t) => t));
         for (const ev of result.newEvents) {
           if (
-            ev.regionId &&
+            ev.systemId &&
             (ev.kind === "front_collapse" ||
               ev.kind === "capital_fallen" ||
               ev.kind === "relic_discovery")
           ) {
-            map.pulseRegion(ev.regionId);
+            map.pulseSystem(ev.systemId);
           }
         }
         logicStartedAt = now;
@@ -118,7 +201,8 @@ export function startChronicle(
       showContested: st.overlays.contested,
       showDiplomacy: st.overlays.diplomacy,
       showFrontiers: st.overlays.frontiers,
-      seed: sim.seed,
+      showLanes: st.overlays.lanes,
+      showLabels: st.overlays.labels,
     });
     dash.sync(view, pendingEvents);
     pendingEvents = [];
@@ -127,13 +211,42 @@ export function startChronicle(
   raf = requestAnimationFrame(frame);
 
   active = {
+    options: launchOptions,
+    hooks,
     stop: () => {
       stopped = true;
       cancelAnimationFrame(raf);
+      window.removeEventListener("keydown", onKey);
       map.dispose();
       dash.dispose();
+      section.remove();
+      document.body.classList.remove("chronicle-active");
     },
   };
+}
+
+/** Back/forward should move in and out of Chronicle like any other route. */
+function installHashListener(): void {
+  if (hashListenerInstalled) return;
+  hashListenerInstalled = true;
+  window.addEventListener("hashchange", () => {
+    const target = readChronicleHash();
+    if (!target) {
+      if (active) {
+        const hooks = active.hooks;
+        stopChronicle();
+        hooks.onExit?.();
+      }
+      return;
+    }
+    if (!active) return;
+    const same =
+      active.options.mapSize === target.mapSize &&
+      active.options.seed === target.seed;
+    if (same) return;
+    const host = document.body;
+    startChronicle(host, target, active.hooks);
+  });
 }
 
 export function readChronicleHash(): ChronicleLaunchOptions | null {
@@ -141,18 +254,22 @@ export function readChronicleHash(): ChronicleLaunchOptions | null {
   if (!hash.startsWith("/chronicle")) return null;
   const qs = hash.includes("?") ? hash.slice(hash.indexOf("?") + 1) : "";
   const params = new URLSearchParams(qs);
-  const mapSize = (params.get("size") as MapSizeTier | null) ?? "medium";
+  const size = params.get("size") as MapSizeTier | null;
+  const mapSize: MapSizeTier =
+    size && ["small", "medium", "large"].includes(size) ? size : "medium";
   const seedParam = params.get("seed");
-  return {
-    mapSize: ["small", "medium", "large"].includes(mapSize) ? mapSize : "medium",
-    ...(seedParam ? { seed: Number(seedParam) >>> 0 } : {}),
-  };
+  const seed = seedParam !== null ? Number(seedParam) >>> 0 : undefined;
+  return seed !== undefined ? { mapSize, seed } : { mapSize };
 }
 
-export function writeChronicleHash(opts: ChronicleLaunchOptions): void {
+export function writeChronicleHash(
+  opts: ChronicleLaunchOptions,
+  replace = false,
+): void {
   const params = new URLSearchParams();
   params.set("size", opts.mapSize ?? "medium");
   if (opts.seed != null) params.set("seed", String(opts.seed));
-  location.hash = `/chronicle?${params.toString()}`;
+  const hash = `#/chronicle?${params.toString()}`;
+  if (replace) history.replaceState(null, "", location.pathname + location.search + hash);
+  else location.hash = hash;
 }
-

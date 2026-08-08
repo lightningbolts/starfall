@@ -74,6 +74,10 @@ const SYSTEM_PREFIX = [
   "Beta",
   "Gamma",
   "Delta",
+  "Epsilon",
+  "Zeta",
+  "Sigma",
+  "Omega",
   "Kepler",
   "Nova",
   "Cygnus",
@@ -82,6 +86,10 @@ const SYSTEM_PREFIX = [
   "Orion",
   "Pulsar",
   "Halo",
+  "Draco",
+  "Corvus",
+  "Aquila",
+  "Serpens",
 ] as const;
 
 function titleCaseSyllable(s: string): string {
@@ -116,14 +124,20 @@ export function generateEmpireName(
   return fallback;
 }
 
-export function generateSystemName(seed: number, regionId: string, i: number): string {
+export function generateSystemName(
+  seed: number,
+  systemId: string,
+  i: number,
+): string {
   const rng = createRng(
-    seed ^ hashStr(regionId) ^ (i * 0x85ebca6b) ^ 0x165667b1,
+    seed ^ hashStr(systemId) ^ (i * 0x85ebca6b) ^ 0x165667b1,
   );
   const prefix = pick(rng, SYSTEM_PREFIX);
   const syl = titleCaseSyllable(pick(rng, SYLLABLES));
-  const n = 1 + Math.floor(rng() * 99);
-  return `${prefix} ${syl}-${n}`;
+  const pattern = Math.floor(rng() * 3);
+  if (pattern === 0) return `${prefix} ${syl}`;
+  if (pattern === 1) return `${syl}-${1 + Math.floor(rng() * 99)}`;
+  return `${prefix} ${syl}-${1 + Math.floor(rng() * 99)}`;
 }
 
 function hashStr(s: string): number {

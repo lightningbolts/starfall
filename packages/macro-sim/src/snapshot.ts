@@ -1,44 +1,42 @@
 import type { MacroSnapshot, MacroState } from "./types.js";
 
+/**
+ * Dynamic fields only — geometry is shared by reference, so a snapshot costs a
+ * few numbers per system rather than a polygon copy.
+ */
 export function buildSnapshot(state: MacroState): MacroSnapshot {
-  const regions: MacroSnapshot["regions"] = {};
-  for (const id of state.regionOrder) {
-    const r = state.regions[id]!;
-    regions[id] = {
-      ownerId: r.ownerId,
-      population: r.population,
-      credits: r.credits,
-      garrison: r.garrison,
-      contested: r.contested ? { ...r.contested } : null,
-      site: { ...r.site },
-      polygon: r.polygon.map((p) => ({ ...p })),
-      neighbors: [...r.neighbors],
+  const systems: MacroSnapshot["systems"] = {};
+  for (const id of state.systemOrder) {
+    const s = state.systems[id]!;
+    systems[id] = {
+      ownerId: s.ownerId,
+      population: s.population,
+      credits: s.credits,
+      garrison: s.garrison,
+      contested: s.contested ? { ...s.contested } : null,
     };
   }
 
   const empires: MacroSnapshot["empires"] = {};
   for (const id of state.empireOrder) {
     const e = state.empires[id]!;
-    let territory = 0;
     let population = 0;
     let credits = 0;
     let garrison = 0;
-    for (const rid of state.regionOrder) {
-      const r = state.regions[rid]!;
-      if (r.ownerId !== id) continue;
-      territory++;
-      population += r.population;
-      credits += r.credits;
-      garrison += r.garrison;
+    for (const sid of e.ownedSystems) {
+      const s = state.systems[sid]!;
+      population += s.population;
+      credits += s.credits;
+      garrison += s.garrison;
     }
     empires[id] = {
       name: e.name,
       colorHue: e.colorHue,
       archetype: e.archetype,
-      capitalRegionId: e.capitalRegionId,
+      capitalSystemId: e.capitalSystemId,
       allies: [...e.allies],
       alive: e.alive,
-      territory,
+      territory: e.ownedSystems.size,
       population,
       credits,
       garrison,
@@ -48,13 +46,11 @@ export function buildSnapshot(state: MacroState): MacroSnapshot {
   return {
     tick: state.tick,
     status: state.status,
-    regions,
+    geometry: state.geometry,
+    systems,
     empires,
-    events: state.events.slice(-80).map((ev) => ({
-      ...ev,
-      empireIds: [...ev.empireIds],
-    })),
-    regionOrder: [...state.regionOrder],
-    empireOrder: [...state.empireOrder],
+    events: state.events.slice(-120),
+    systemOrder: state.systemOrder,
+    empireOrder: state.empireOrder,
   };
 }

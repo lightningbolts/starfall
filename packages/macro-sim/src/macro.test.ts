@@ -1,64 +1,151 @@
 import { describe, expect, it } from "vitest";
-import { generateRegionGalaxy, voronoiCell } from "./galaxy.js";
+import { borderKey, generateGalaxy, taggedVoronoiCell } from "./galaxy.js";
 import { createMacroMatch } from "./match.js";
 import { easeInOutCubic, lerpSnapshot } from "./interpolate.js";
 import { generateEmpireName } from "./names.js";
-import { pressureBorder, resolveContestedFronts } from "./combat.js";
+import {
+  colonizeCost,
+  pressureBorder,
+  resolveContestedFronts,
+  tryColonize,
+} from "./combat.js";
 import { stepLogic } from "./tick.js";
-import { DEFAULT_MACRO_CONFIG } from "./types.js";
+import {
+  DEFAULT_MACRO_CONFIG,
+  empireCountForSystems,
+  type Vec2,
+} from "./types.js";
 import { createRng } from "./rng.js";
 import { buildSnapshot } from "./snapshot.js";
 
-describe("galaxy adjacency", () => {
-  it("produces connected undirected neighbors and valid polygons", () => {
-    const g = generateRegionGalaxy(42, 80);
-    expect(g.ids).toHaveLength(80);
-    expect(g.sites).toHaveLength(80);
-    expect(g.polygons).toHaveLength(80);
+function segmentsCross(a0: Vec2, a1: Vec2, b0: Vec2, b1: Vec2): boolean {
+  const cross = (o: Vec2, p: Vec2, q: Vec2): number =>
+    (p.x - o.x) * (q.y - o.y) - (p.y - o.y) * (q.x - o.x);
+  const eps = 1e-9;
+  // Shared endpoints are legal in a planar graph.
+  const shares =
+    (Math.abs(a0.x - b0.x) < eps && Math.abs(a0.y - b0.y) < eps) ||
+    (Math.abs(a0.x - b1.x) < eps && Math.abs(a0.y - b1.y) < eps) ||
+    (Math.abs(a1.x - b0.x) < eps && Math.abs(a1.y - b0.y) < eps) ||
+    (Math.abs(a1.x - b1.x) < eps && Math.abs(a1.y - b1.y) < eps);
+  if (shares) return false;
+  const d1 = cross(a0, a1, b0);
+  const d2 = cross(a0, a1, b1);
+  const d3 = cross(b0, b1, a0);
+  const d4 = cross(b0, b1, a1);
+  return (
+    ((d1 > eps && d2 < -eps) || (d1 < -eps && d2 > eps)) &&
+    ((d3 > eps && d4 < -eps) || (d3 < -eps && d4 > eps))
+  );
+}
 
-    // Undirected
-    const index = new Map(g.ids.map((id, i) => [id, i]));
-    for (let i = 0; i < g.ids.length; i++) {
-      for (const nid of g.neighbors[i]!) {
-        const j = index.get(nid)!;
-        expect(g.neighbors[j]).toContain(g.ids[i]);
-      }
-    }
+describe("galaxy generation", () => {
+  const galaxy = generateGalaxy(42, 220);
 
-    // Connected via BFS
-    const seen = new Set<string>();
-    const q = [g.ids[0]!];
-    seen.add(q[0]!);
-    while (q.length) {
-      const u = q.pop()!;
-      const ui = index.get(u)!;
-      for (const v of g.neighbors[ui]!) {
-        if (!seen.has(v)) {
-          seen.add(v);
-          q.push(v);
-        }
-      }
-    }
-    expect(seen.size).toBe(80);
-
-    for (const poly of g.polygons) {
-      expect(poly.length).toBeGreaterThanOrEqual(3);
+  it("places the requested number of stars with names and cells", () => {
+    expect(galaxy.systems).toHaveLength(220);
+    expect(galaxy.ids).toHaveLength(220);
+    for (const s of galaxy.systems) {
+      expect(s.cell.length).toBeGreaterThanOrEqual(3);
+      expect(s.name.length).toBeGreaterThan(1);
+      expect(galaxy.byId[s.id]).toBe(s);
     }
   });
 
-  it("voronoiCell clips to a polygon", () => {
+  it("keeps a minimum separation between stars", () => {
+    let closest = Infinity;
+    const sites = galaxy.systems.map((s) => s.site);
+    for (let i = 0; i < sites.length; i++) {
+      for (let j = i + 1; j < sites.length; j++) {
+        closest = Math.min(
+          closest,
+          Math.hypot(sites[i]!.x - sites[j]!.x, sites[i]!.y - sites[j]!.y),
+        );
+      }
+    }
+    // Mean spacing for a disc of this radius; separation must be a real fraction of it.
+    const meanSpacing = galaxy.radius * Math.sqrt(Math.PI / sites.length);
+    expect(closest).toBeGreaterThan(meanSpacing * 0.15);
+  });
+
+  it("builds a connected hyperlane web with symmetric links", () => {
+    for (const s of galaxy.systems) {
+      expect(s.hyperlanes.length).toBeGreaterThan(0);
+      for (const other of s.hyperlanes) {
+        expect(galaxy.byId[other]!.hyperlanes).toContain(s.id);
+      }
+    }
+
+    const seen = new Set<string>([galaxy.ids[0]!]);
+    const queue = [galaxy.ids[0]!];
+    while (queue.length) {
+      const cur = queue.pop()!;
+      for (const next of galaxy.byId[cur]!.hyperlanes) {
+        if (seen.has(next)) continue;
+        seen.add(next);
+        queue.push(next);
+      }
+    }
+    expect(seen.size).toBe(galaxy.systems.length);
+  });
+
+  it("produces a planar web — no two hyperlanes cross", () => {
+    const segments = galaxy.lanes.map((lane) => ({
+      p0: galaxy.byId[lane.a]!.site,
+      p1: galaxy.byId[lane.b]!.site,
+    }));
+    let crossings = 0;
+    for (let i = 0; i < segments.length; i++) {
+      for (let j = i + 1; j < segments.length; j++) {
+        if (
+          segmentsCross(
+            segments[i]!.p0,
+            segments[i]!.p1,
+            segments[j]!.p0,
+            segments[j]!.p1,
+          )
+        ) {
+          crossings++;
+        }
+      }
+    }
+    expect(crossings).toBe(0);
+  });
+
+  it("exposes a border segment for every hyperlane", () => {
+    for (const lane of galaxy.lanes) {
+      const edge = galaxy.borderEdgeByKey[borderKey(lane.a, lane.b)];
+      expect(edge).toBeDefined();
+      expect(Math.hypot(edge!.p1.x - edge!.p0.x, edge!.p1.y - edge!.p0.y)).toBeGreaterThan(0);
+    }
+    for (const edge of galaxy.borderEdges) {
+      expect(galaxy.borderEdgeByKey[borderKey(edge.a, edge.b)]).toBe(edge);
+    }
+  });
+
+  it("is deterministic for a seed", () => {
+    const again = generateGalaxy(42, 220);
+    expect(again.systems.map((s) => s.site)).toEqual(
+      galaxy.systems.map((s) => s.site),
+    );
+    expect(again.lanes).toEqual(galaxy.lanes);
+  });
+
+  it("taggedVoronoiCell reports which neighbor produced each edge", () => {
     const site = { x: 0, y: 0 };
-    const poly = voronoiCell(
+    const result = taggedVoronoiCell(
       site,
       [
-        { x: 2, y: 0 },
-        { x: -2, y: 0 },
-        { x: 0, y: 2 },
-        { x: 0, y: -2 },
+        { p: { x: 2, y: 0 }, tag: 0 },
+        { p: { x: -2, y: 0 }, tag: 1 },
+        { p: { x: 0, y: 2 }, tag: 2 },
+        { p: { x: 0, y: -2 }, tag: 3 },
       ],
       10,
     );
-    expect(poly.length).toBeGreaterThanOrEqual(3);
+    expect(result.cell.length).toBeGreaterThanOrEqual(3);
+    const tags = new Set(result.edges.map((e) => e.neighbor));
+    expect(tags).toEqual(new Set([0, 1, 2, 3]));
   });
 });
 
@@ -76,42 +163,86 @@ describe("contested flips", () => {
   it("flips ownership past threshold", () => {
     const { state, config } = createMacroMatch({
       seed: 99,
-      regionCount: 60,
+      systemCount: 60,
       empireCount: 8,
     });
-    // Capitals start isolated — force a shared border for the flip test
+    // Homeworlds start isolated — force a shared border for the flip test
     const victim = state.empireOrder[0]!;
     const attacker = state.empireOrder[1]!;
-    const targetId = state.empires[victim]!.capitalRegionId;
-    const neighbor = state.regions[targetId]!.neighbors[0]!;
-    state.regions[neighbor]!.ownerId = attacker;
-    state.regions[neighbor]!.garrison = 500;
-    state.regions[targetId]!.contested = {
+    const targetId = state.empires[victim]!.capitalSystemId;
+    const neighborId = state.systems[targetId]!.hyperlanes[0]!;
+    const neighbor = state.systems[neighborId]!;
+    neighbor.ownerId = attacker;
+    state.empires[attacker]!.ownedSystems.add(neighborId);
+    neighbor.garrison = 500;
+    state.systems[targetId]!.contested = {
       vs: attacker,
       pct: config.contestedFlipThreshold,
     };
-    state.regions[targetId]!.garrison = 10;
+    state.systems[targetId]!.garrison = 10;
 
     const result = resolveContestedFronts(state, config);
     expect(result.flipped).toContain(targetId);
-    expect(state.regions[targetId]!.ownerId).toBe(attacker);
-    expect(state.regions[targetId]!.ownerId).not.toBe(victim);
+    expect(state.systems[targetId]!.ownerId).toBe(attacker);
+    expect(state.empires[attacker]!.ownedSystems.has(targetId)).toBe(true);
+    expect(state.empires[victim]!.ownedSystems.has(targetId)).toBe(false);
   });
 
-  it("pressureBorder claims unowned regions", () => {
-    const { state } = createMacroMatch({ seed: 1, regionCount: 40, empireCount: 4 });
-    const rid = state.regionOrder.find((id) => !state.regions[id]!.ownerId)!;
+  it("colonization needs credits on the frontier", () => {
+    const { state } = createMacroMatch({
+      seed: 1,
+      systemCount: 40,
+      empireCount: 4,
+    });
+    const empire = state.empires[state.empireOrder[0]!]!;
+    const home = state.systems[empire.capitalSystemId]!;
+    const targetId = home.hyperlanes[0]!;
+
+    home.credits = 0;
+    expect(tryColonize(state, empire, targetId)).toBe(false);
+    expect(state.systems[targetId]!.ownerId).toBeNull();
+
+    home.credits = colonizeCost(empire) + 5;
+    expect(tryColonize(state, empire, targetId)).toBe(true);
+    expect(state.systems[targetId]!.ownerId).toBe(empire.id);
+    expect(empire.ownedSystems.has(targetId)).toBe(true);
+  });
+
+  it("colonization cost climbs with territory", () => {
+    const { state } = createMacroMatch({
+      seed: 5,
+      systemCount: 60,
+      empireCount: 4,
+    });
+    const empire = state.empires[state.empireOrder[0]!]!;
+    const early = colonizeCost(empire);
+    for (const id of state.systemOrder.slice(0, 30)) {
+      empire.ownedSystems.add(id);
+    }
+    expect(colonizeCost(empire)).toBeGreaterThan(early * 4);
+  });
+
+  it("pressureBorder colonizes unowned systems when affordable", () => {
+    const { state } = createMacroMatch({
+      seed: 1,
+      systemCount: 40,
+      empireCount: 4,
+    });
     const attacker = state.empireOrder[0]!;
-    pressureBorder(state, attacker, rid, 0.5);
-    expect(state.regions[rid]!.ownerId).toBe(attacker);
+    const empire = state.empires[attacker]!;
+    const home = state.systems[empire.capitalSystemId]!;
+    home.credits = 500;
+    const targetId = home.hyperlanes[0]!;
+    pressureBorder(state, attacker, targetId, 0.5);
+    expect(state.systems[targetId]!.ownerId).toBe(attacker);
   });
 });
 
 describe("seed stability", () => {
   it("bot ticks are deterministic for the same seed", () => {
-    const a = createMacroMatch({ seed: 12345, regionCount: 80, empireCount: 12 });
-    const b = createMacroMatch({ seed: 12345, regionCount: 80, empireCount: 12 });
-    const cfg = { ...DEFAULT_MACRO_CONFIG, regionCount: 80, empireCount: 12 };
+    const a = createMacroMatch({ seed: 12345, systemCount: 80, empireCount: 12 });
+    const b = createMacroMatch({ seed: 12345, systemCount: 80, empireCount: 12 });
+    const cfg = { ...DEFAULT_MACRO_CONFIG, systemCount: 80, empireCount: 12 };
 
     for (let i = 0; i < 5; i++) {
       stepLogic(a.state, cfg);
@@ -119,11 +250,30 @@ describe("seed stability", () => {
     }
 
     expect(a.state.tick).toBe(b.state.tick);
-    for (const id of a.state.regionOrder) {
-      expect(a.state.regions[id]!.ownerId).toBe(b.state.regions[id]!.ownerId);
-      expect(a.state.regions[id]!.garrison).toBeCloseTo(b.state.regions[id]!.garrison, 5);
+    for (const id of a.state.systemOrder) {
+      expect(a.state.systems[id]!.ownerId).toBe(b.state.systems[id]!.ownerId);
+      expect(a.state.systems[id]!.garrison).toBeCloseTo(
+        b.state.systems[id]!.garrison,
+        5,
+      );
     }
-    expect(a.state.events.map((e) => e.text)).toEqual(b.state.events.map((e) => e.text));
+    expect(a.state.events.map((e) => e.text)).toEqual(
+      b.state.events.map((e) => e.text),
+    );
+  });
+
+  it("event sequence ids are unique and increasing", () => {
+    const { state, config } = createMacroMatch({
+      seed: 808,
+      systemCount: 120,
+      empireCount: 10,
+    });
+    for (let i = 0; i < 150; i++) stepLogic(state, config);
+    const seqs = state.events.map((e) => e.seq);
+    expect(new Set(seqs).size).toBe(seqs.length);
+    for (let i = 1; i < seqs.length; i++) {
+      expect(seqs[i]!).toBeGreaterThan(seqs[i - 1]!);
+    }
   });
 });
 
@@ -137,7 +287,7 @@ describe("interpolate", () => {
   it("lerpSnapshot endpoints match source snapshots", () => {
     const { state, config } = createMacroMatch({
       seed: 3,
-      regionCount: 50,
+      systemCount: 50,
       empireCount: 6,
     });
     const snapA = buildSnapshot(state);
@@ -147,34 +297,60 @@ describe("interpolate", () => {
     const at0 = lerpSnapshot(snapA, snapB, 0, (t) => t);
     const at1 = lerpSnapshot(snapA, snapB, 1, (t) => t);
 
-    for (const id of snapA.regionOrder) {
-      expect(at0.regions[id]!.population).toBeCloseTo(snapA.regions[id]!.population, 5);
-      expect(at1.regions[id]!.population).toBeCloseTo(snapB.regions[id]!.population, 5);
+    for (const id of snapA.systemOrder) {
+      expect(at0.systems[id]!.population).toBeCloseTo(
+        snapA.systems[id]!.population,
+        5,
+      );
+      expect(at1.systems[id]!.population).toBeCloseTo(
+        snapB.systems[id]!.population,
+        5,
+      );
     }
     for (const id of snapA.empireOrder) {
-      expect(at0.empires[id]!.territory).toBeCloseTo(snapA.empires[id]!.territory, 5);
-      expect(at1.empires[id]!.territory).toBeCloseTo(snapB.empires[id]!.territory, 5);
+      expect(at0.empires[id]!.territory).toBeCloseTo(
+        snapA.empires[id]!.territory,
+        5,
+      );
+      expect(at1.empires[id]!.territory).toBeCloseTo(
+        snapB.empires[id]!.territory,
+        5,
+      );
     }
+  });
+
+  it("shares static geometry rather than copying it", () => {
+    const { state } = createMacroMatch({ seed: 11, systemCount: 40 });
+    const snap = buildSnapshot(state);
+    expect(snap.geometry).toBe(state.geometry);
+  });
+});
+
+describe("scale", () => {
+  it("maps system counts to the Stellaris-style empire clamp", () => {
+    expect(empireCountForSystems(600)).toBe(12);
+    expect(empireCountForSystems(1200)).toBe(24);
+    expect(empireCountForSystems(2400)).toBe(48);
   });
 });
 
 describe("createMacroMatch", () => {
-  it("starts each empire at a capital only; wilderness is unowned", () => {
+  it("starts each empire on one homeworld; the rest is uncolonized", () => {
     const { state, snapshot } = createMacroMatch({
       seed: 55,
       mapSize: "small",
     });
-    expect(state.regionOrder.length).toBe(400);
-    expect(state.empireOrder.length).toBe(20);
+    expect(state.systemOrder.length).toBe(600);
+    expect(state.empireOrder.length).toBe(empireCountForSystems(600));
     let owned = 0;
-    for (const id of state.regionOrder) {
-      expect(state.regions[id]!.polygon.length).toBeGreaterThanOrEqual(3);
-      if (state.regions[id]!.ownerId) owned++;
+    for (const id of state.systemOrder) {
+      if (state.systems[id]!.ownerId) owned++;
     }
     expect(owned).toBe(state.empireOrder.length);
     for (const eid of state.empireOrder) {
       const e = state.empires[eid]!;
-      expect(state.regions[e.capitalRegionId]!.ownerId).toBe(eid);
+      expect(state.systems[e.capitalSystemId]!.ownerId).toBe(eid);
+      expect(e.ownedSystems.size).toBe(1);
       expect(snapshot.empires[eid]!.territory).toBe(1);
     }
     const names = state.empireOrder.map((id) => state.empires[id]!.name);
@@ -182,21 +358,44 @@ describe("createMacroMatch", () => {
     expect(snapshot.tick).toBe(0);
   });
 
-  it("expands from capitals into unowned regions over ticks", () => {
+  it("colonizes outward over ticks, and slows as empires grow", () => {
     const { state, config } = createMacroMatch({
       seed: 77,
-      regionCount: 80,
+      systemCount: 400,
       empireCount: 8,
     });
-    const startOwned = state.regionOrder.filter(
-      (id) => state.regions[id]!.ownerId,
-    ).length;
-    expect(startOwned).toBe(8);
+    const ownedCount = (): number =>
+      state.systemOrder.filter((id) => state.systems[id]!.ownerId).length;
+
+    expect(ownedCount()).toBe(8);
+    for (let i = 0; i < 100; i++) stepLogic(state, config);
+    const early = ownedCount();
+    expect(early).toBeGreaterThan(8);
+
+    for (let i = 0; i < 100; i++) stepLogic(state, config);
+    const mid = ownedCount();
+    for (let i = 0; i < 100; i++) stepLogic(state, config);
+    const late = ownedCount();
+
+    expect(mid).toBeGreaterThanOrEqual(early);
+    expect(late - mid).toBeLessThanOrEqual(mid - early + 1);
+  });
+
+  it("keeps the owned-systems index in step with ownership", () => {
+    const { state, config } = createMacroMatch({
+      seed: 404,
+      systemCount: 200,
+      empireCount: 8,
+    });
     for (let i = 0; i < 200; i++) stepLogic(state, config);
-    const laterOwned = state.regionOrder.filter(
-      (id) => state.regions[id]!.ownerId,
-    ).length;
-    expect(laterOwned).toBeGreaterThan(startOwned);
+    for (const eid of state.empireOrder) {
+      const empire = state.empires[eid]!;
+      const scanned = state.systemOrder.filter(
+        (id) => state.systems[id]!.ownerId === eid,
+      );
+      expect(empire.ownedSystems.size).toBe(scanned.length);
+      for (const id of scanned) expect(empire.ownedSystems.has(id)).toBe(true);
+    }
   });
 });
 

@@ -1,4 +1,9 @@
-import type { ContestedFront, EmpireId, MacroSnapshot, RegionId } from "./types.js";
+import type {
+  ContestedFront,
+  EmpireId,
+  MacroSnapshot,
+  SystemId,
+} from "./types.js";
 
 export function easeInOutCubic(t: number): number {
   const x = Math.min(1, Math.max(0, t));
@@ -13,7 +18,7 @@ function lerp(a: number, b: number, t: number): number {
  * Interpolate between two logic snapshots.
  * Ownership blends via `ownerBlend` (0 = fully A owner, 1 = fully B owner) when owners differ.
  */
-export interface InterpolatedRegion {
+export interface InterpolatedSystem {
   ownerId: EmpireId | null;
   /** Secondary owner when blending across a flip. */
   ownerIdB: EmpireId | null;
@@ -22,19 +27,17 @@ export interface InterpolatedRegion {
   credits: number;
   garrison: number;
   contested: ContestedFront | null;
-  site: { x: number; y: number };
-  polygon: { x: number; y: number }[];
-  neighbors: RegionId[];
 }
 
 export interface InterpolatedSnapshot {
   tick: number;
   t: number;
   status: MacroSnapshot["status"];
-  regions: Record<RegionId, InterpolatedRegion>;
+  geometry: MacroSnapshot["geometry"];
+  systems: Record<SystemId, InterpolatedSystem>;
   empires: MacroSnapshot["empires"];
   events: MacroSnapshot["events"];
-  regionOrder: RegionId[];
+  systemOrder: SystemId[];
   empireOrder: EmpireId[];
 }
 
@@ -45,22 +48,19 @@ export function lerpSnapshot(
   ease: (t: number) => number = easeInOutCubic,
 ): InterpolatedSnapshot {
   const t = ease(rawT);
-  const regions: Record<RegionId, InterpolatedRegion> = {};
-  for (const id of b.regionOrder) {
-    const ra = a.regions[id] ?? b.regions[id]!;
-    const rb = b.regions[id]!;
-    const ownerChanged = ra.ownerId !== rb.ownerId;
-    regions[id] = {
-      ownerId: ownerChanged ? ra.ownerId : rb.ownerId,
-      ownerIdB: ownerChanged ? rb.ownerId : null,
+  const systems: Record<SystemId, InterpolatedSystem> = {};
+  for (const id of b.systemOrder) {
+    const sa = a.systems[id] ?? b.systems[id]!;
+    const sb = b.systems[id]!;
+    const ownerChanged = sa.ownerId !== sb.ownerId;
+    systems[id] = {
+      ownerId: ownerChanged ? sa.ownerId : sb.ownerId,
+      ownerIdB: ownerChanged ? sb.ownerId : null,
       ownerBlend: ownerChanged ? t : 0,
-      population: lerp(ra.population, rb.population, t),
-      credits: lerp(ra.credits, rb.credits, t),
-      garrison: lerp(ra.garrison, rb.garrison, t),
-      contested: lerpContested(ra.contested, rb.contested, t),
-      site: rb.site,
-      polygon: rb.polygon,
-      neighbors: rb.neighbors,
+      population: lerp(sa.population, sb.population, t),
+      credits: lerp(sa.credits, sb.credits, t),
+      garrison: lerp(sa.garrison, sb.garrison, t),
+      contested: lerpContested(sa.contested, sb.contested, t),
     };
   }
 
@@ -81,10 +81,11 @@ export function lerpSnapshot(
     tick: b.tick,
     t,
     status: b.status,
-    regions,
+    geometry: b.geometry,
+    systems,
     empires,
     events: b.events,
-    regionOrder: b.regionOrder,
+    systemOrder: b.systemOrder,
     empireOrder: b.empireOrder,
   };
 }

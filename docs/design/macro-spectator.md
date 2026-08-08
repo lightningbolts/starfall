@@ -2,15 +2,16 @@
 
 **Status:** v1 design lock  
 **Audience:** `packages/macro-sim` and `apps/web` Chronicle implementers  
-**Companions:** [visuals.md](./visuals.md) (shared universe look), [ADR 003](../adr/003-macro-tick-split.md)
+**Companions:** [visuals.md](./visuals.md) (shared palette + Chronicle map look), [ADR 003](../adr/003-macro-tick-split.md)
 
-A separate mode from the competitive real-time game — same universe theme, different engine. The viewer does not act; they watch AI empires expand, ally, betray, and collapse across a galaxy of aggregated regions, with a toggleable dashboard for following the story.
+A separate mode from the competitive real-time game — same universe theme, different engine. The viewer does not act; they watch AI empires expand, ally, betray, and collapse across a galaxy of individual star systems linked by planar hyperlanes, with a toggleable dashboard for following the story.
 
 ## 1. Scale and entity model
 
-- **Simulated unit: regions, not systems.** A galaxy is partitioned into hundreds to thousands of aggregated regions. Each region holds: owner, population, credits, garrison strength, and (if on a frontier) a contested-% value.
-- **Individual systems are flavor only.** Not tracked in game state. When a viewer zooms into a region, system names and points are generated on demand from seed — same procedural approach as empire names.
-- **AI empire count stays modest** — roughly 20–150 empires regardless of galaxy size. System/region scaling does not scale agent count linearly beyond the clamp below.
+- **Simulated unit: star systems.** Each system holds: owner, population, credits, garrison strength, persistent name, star class, hyperlane links, and (if on a frontier) a contested-% value.
+- **Territory cells are render-only.** Voronoi cells around each star rasterize into a soft empire coverage field (blobby fills + glowing rims). Cell edges are never stroked.
+- **Hyperlanes** form a planar, connected graph (k-nearest candidates, short-first acceptance with degree caps, MST connectivity, a few loop-forming extras). Combat and colonization only travel along these links.
+- **AI empire count stays modest** — roughly a dozen to a few dozen empires so each grows a readable blob of territory.
 
 ### Playtest defaults
 
@@ -20,9 +21,10 @@ A separate mode from the competitive real-time game — same universe theme, dif
 | Economy pulse | every **10** logic ticks (~1s) |
 | Bot cadence | every **5** logic ticks |
 | Production variance | **±10%** per economy pulse |
-| Regions (small / medium / large) | **400 / 1000 / 2500** |
-| Empire count | `clamp(round(regions / 25), 20, 150)` |
-| Starting territory | **capital region only**; wilderness is unowned until empires expand |
+| Systems (small / medium / large) | **600 / 1200 / 2400** |
+| Empire count | `clamp(round(systems / 50), 12, 48)` |
+| Starting territory | **capital system only**; wilderness is unowned until empires expand |
+| Colonization | credit cost from adjacent owned systems; cost scales with owned count so expansion decelerates |
 | Render interpolation | ease-in-out cubic between last and next snapshots |
 
 ## 2. Bot archetypes
@@ -35,7 +37,7 @@ A separate mode from the competitive real-time game — same universe theme, dif
 | Loyal builder | Sticks with allies, prioritizes joint defense |
 | Wildcard | Randomized trait weights per game |
 
-Traits: `aggression`, `loyalty`, `risk`, `greed` ∈ [0, 1]. Decision points: expand, reinforce, propose/break alliance, pressure a border fight.
+Traits: `aggression`, `loyalty`, `risk`, `greed` ∈ [0, 1]. Decision points: expand (multi-claim when rich), reinforce, propose/break alliance, pressure a border fight.
 
 ## 3. Tick model
 
@@ -43,21 +45,28 @@ See [ADR 003](../adr/003-macro-tick-split.md). Logic ticks run at **100ms** (com
 
 ## 4. Randomization
 
-- **Production variance:** each region's per-tick output × uniform multiplier in [0.9, 1.1].
-- **Random events:** weighted occurrences (production surge, rebellion, relic discovery, pirate raid, natural disaster). Temporary or one-shot modifiers; every event emits a ticker line.
+- **Production variance:** each system's per-tick output × uniform multiplier in [0.9, 1.1].
+- **Random events:** weighted occurrences (production surge, rebellion, relic discovery, pirate raid, natural disaster). Temporary or one-shot modifiers; every event emits a ticker line with a monotonic sequence id.
 
 ## 5. Combat and borders
 
-Border regions compare aggregate garrison and shift a `contested.pct` front over time. Decisive shifts (front collapses, capital falls) are promoted to the event feed.
+Adjacent hostile systems compare aggregate garrison and shift a `contested.pct` front over time along the real shared border segment. Decisive shifts (front collapses, capital falls) are promoted to the event feed.
 
-## 6. Dashboard
+## 6. Map presentation
 
-Toggleable panels: empire roster (sortable), event feed, map overlays (diplomacy, contested fronts, focus frontiers), per-empire trend graphs, filters (focus one empire, pin top N).
+- Seeded nebula + parallax starfield background.
+- Empire territory as a coverage-field composite (no visible tile edges).
+- Hyperlanes, contested fronts on true border edges, instanced star sprites, capital rings, bezier diplomacy arcs.
+- DOM labels for empire and system names with zoom-based fading; zoom-to-cursor camera.
 
-## 7. Empire naming
+## 7. Dashboard
 
-Procedural word-bank: species syllables + adjectives + government nouns (Imperium, Hegemony, Concord, Dominion, Collective, Republic). No live API.
+Toggleable panels: empire roster (sortable, persistent rows), event feed (sequence-deduped), map overlays (diplomacy, contested fronts, frontiers, lanes, labels), multi-series trend graphs, filters (focus one empire, pin top N). Seed shown in the top bar; keyboard: space pause, 1/2/4 speed, F fit, Esc clear focus.
 
-## 8. Hosting
+## 8. Empire naming
+
+Procedural word-bank: species syllables + adjectives + government nouns (Imperium, Hegemony, Concord, Dominion, Collective, Republic). System names from the same seeded generator. No live API.
+
+## 9. Hosting
 
 Client-only for v1 — sim runs in the browser. Competitive WebSocket path is unused.

@@ -1,27 +1,29 @@
 import { pickArchetype, traitsForArchetype } from "./archetypes.js";
-import { generateRegionGalaxy } from "./galaxy.js";
+import { generateGalaxy } from "./galaxy.js";
 import { generateEmpireName } from "./names.js";
 import { createRng } from "./rng.js";
+import { buildSnapshot } from "./snapshot.js";
 import type {
   Empire,
   EmpireId,
   MacroConfig,
+  MacroSnapshot,
   MacroState,
   MapSizeTier,
-  Region,
+  StarSystem,
+  SystemId,
+  Vec2,
 } from "./types.js";
 import {
   DEFAULT_MACRO_CONFIG,
-  REGION_COUNTS,
-  empireCountForRegions,
+  SYSTEM_COUNTS,
+  empireCountForSystems,
 } from "./types.js";
-import { buildSnapshot } from "./snapshot.js";
-import type { MacroSnapshot } from "./types.js";
 
 export interface CreateMacroOptions {
   seed?: number;
   mapSize?: MapSizeTier;
-  regionCount?: number;
+  systemCount?: number;
   empireCount?: number;
   config?: Partial<MacroConfig>;
 }
@@ -32,37 +34,37 @@ export function createMacroMatch(opts: CreateMacroOptions = {}): {
   snapshot: MacroSnapshot;
 } {
   const mapSize = opts.mapSize ?? "medium";
-  const regionCount = opts.regionCount ?? REGION_COUNTS[mapSize];
-  const empireCount = opts.empireCount ?? empireCountForRegions(regionCount);
+  const systemCount = opts.systemCount ?? SYSTEM_COUNTS[mapSize];
+  const empireCount = opts.empireCount ?? empireCountForSystems(systemCount);
   const config: MacroConfig = {
     ...DEFAULT_MACRO_CONFIG,
     ...opts.config,
-    regionCount,
+    systemCount,
     empireCount,
   };
   const seed = opts.seed ?? (Math.floor(Math.random() * 0xffffffff) >>> 0);
-  const galaxy = generateRegionGalaxy(seed, regionCount);
+  const geometry = generateGalaxy(seed, systemCount);
   const rng = createRng(seed ^ 0xcafebabe);
 
-  const regions: Record<string, Region> = {};
-  for (let i = 0; i < galaxy.ids.length; i++) {
-    const id = galaxy.ids[i]!;
-    regions[id] = {
-      id,
-      neighbors: galaxy.neighbors[i]!,
+  const systems: Record<SystemId, StarSystem> = {};
+  for (const geo of geometry.systems) {
+    systems[geo.id] = {
+      id: geo.id,
+      name: geo.name,
+      starClass: geo.starClass,
+      site: geo.site,
+      hyperlanes: geo.hyperlanes,
       ownerId: null,
-      // Neutral wilderness — easy to claim, grows only after ownership
-      population: 8 + rng() * 12,
-      credits: 2 + rng() * 6,
+      // Uncolonized space — grows only once an empire claims it.
+      population: 6 + rng() * 10,
+      credits: 2 + rng() * 5,
       garrison: 0,
       contested: null,
-      site: galaxy.sites[i]!,
-      polygon: galaxy.polygons[i]!,
     };
   }
 
   const capitalIndices = farthestPointCapitals(
-    galaxy.sites,
+    geometry.systems.map((s) => s.site),
     empireCount,
     rng,
   );
@@ -70,19 +72,20 @@ export function createMacroMatch(opts: CreateMacroOptions = {}): {
   const empires: Record<EmpireId, Empire> = {};
   const empireOrder: EmpireId[] = [];
 
-  for (let i = 0; i < empireCount; i++) {
+  for (let i = 0; i < capitalIndices.length; i++) {
     const id = `e${i}`;
     const archetype = pickArchetype(seed, i);
-    const capitalRegionId = galaxy.ids[capitalIndices[i]!]!;
+    const capitalSystemId = geometry.ids[capitalIndices[i]!]!;
     empires[id] = {
       id,
       name: generateEmpireName(seed, i, usedNames),
-      colorHue: (i * 360) / empireCount + (rng() - 0.5) * 8,
+      colorHue: hueForIndex(i, capitalIndices.length, rng),
       archetype,
       traits: traitsForArchetype(archetype, seed, i),
-      capitalRegionId,
+      capitalSystemId,
       allies: [],
       alive: true,
+      ownedSystems: new Set<SystemId>(),
       modifiers: {
         productionMult: 1,
         productionTicksLeft: 0,
@@ -91,63 +94,94 @@ export function createMacroMatch(opts: CreateMacroOptions = {}): {
       },
     };
     empireOrder.push(id);
-    // Empires start as a single capital region and expand from there
-    const cap = regions[capitalRegionId]!;
-    cap.ownerId = id;
-    cap.population = 80 + rng() * 40;
-    cap.credits = 60 + rng() * 40;
-    cap.garrison = 50 + rng() * 30;
+
+    // Empires start from a single home system and colonize outward.
+    const home = systems[capitalSystemId]!;
+    home.ownerId = id;
+    empires[id]!.ownedSystems.add(capitalSystemId);
+    home.population = 70 + rng() * 40;
+    home.credits = 55 + rng() * 45;
+    home.garrison = 45 + rng() * 30;
   }
 
   const state: MacroState = {
     tick: 0,
     seed,
-    regions,
+    geometry,
+    systems,
     empires,
-    events: [
-      {
-        tick: 0,
-        kind: "relic_discovery",
-        empireIds: [],
-        regionId: null,
-        text: `Chronicle begins — ${empireCount} empires awaken across ${regionCount} regions.`,
-      },
-    ],
+    events: [],
+    eventSeq: 0,
     status: "running",
-    regionOrder: galaxy.ids,
+    systemOrder: [...geometry.ids],
     empireOrder,
   };
+
+  state.eventSeq = 1;
+  state.events.push({
+    seq: 1,
+    tick: 0,
+    kind: "relic_discovery",
+    empireIds: [],
+    systemId: null,
+    text: `Chronicle begins — ${empireOrder.length} empires awaken among ${systemCount} stars.`,
+  });
 
   return { state, config, snapshot: buildSnapshot(state) };
 }
 
+/**
+ * Even spacing beats a golden-angle spiral here: with a known empire count the
+ * widest possible gap between neighboring hues is what keeps the map readable.
+ * The offset per index breaks up the "rainbow ring" look.
+ */
+function hueForIndex(i: number, total: number, rng: () => number): number {
+  const step = 360 / Math.max(1, total);
+  // Interleave halves so index order does not walk the wheel in order.
+  const half = Math.ceil(total / 2);
+  const slot = i % 2 === 0 ? i / 2 : half + (i - 1) / 2;
+  const raw = (slot * step + rng() * step * 0.25) % 360;
+  // The yellow-green band muddies against the nebula.
+  if (raw > 64 && raw < 92) return raw + 30;
+  return raw;
+}
+
+/** Farthest-point sampling so homeworlds start far apart. */
 function farthestPointCapitals(
-  sites: { x: number; y: number }[],
+  sites: Vec2[],
   count: number,
   rng: () => number,
 ): number[] {
   const n = sites.length;
+  if (n === 0) return [];
+  const wanted = Math.min(count, n);
   const chosen: number[] = [];
-  chosen.push(Math.floor(rng() * n));
-  while (chosen.length < count) {
+  const minDist: number[] = new Array<number>(n).fill(Infinity);
+
+  const take = (idx: number): void => {
+    chosen.push(idx);
+    const p = sites[idx]!;
+    for (let i = 0; i < n; i++) {
+      const q = sites[i]!;
+      const dx = q.x - p.x;
+      const dy = q.y - p.y;
+      const d = dx * dx + dy * dy;
+      if (d < minDist[i]!) minDist[i] = d;
+    }
+  };
+
+  take(Math.floor(rng() * n));
+  while (chosen.length < wanted) {
     let best = -1;
     let bestD = -1;
     for (let i = 0; i < n; i++) {
-      if (chosen.includes(i)) continue;
-      let minD = Infinity;
-      for (const c of chosen) {
-        const dx = sites[i]!.x - sites[c]!.x;
-        const dy = sites[i]!.y - sites[c]!.y;
-        minD = Math.min(minD, dx * dx + dy * dy);
-      }
-      if (minD > bestD) {
-        bestD = minD;
+      if (minDist[i]! > bestD) {
+        bestD = minDist[i]!;
         best = i;
       }
     }
     if (best < 0) break;
-    chosen.push(best);
+    take(best);
   }
   return chosen;
 }
-

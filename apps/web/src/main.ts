@@ -31,21 +31,28 @@ import {
 } from "@starfall/sim";
 import { NetClient, loadStoredClientId, storeClientId } from "./net.js";
 import { MapRenderer, type RenderState } from "./renderer.js";
-import {
-  readChronicleHash,
-  startChronicle,
-  writeChronicleHash,
-} from "./macro/chronicle.js";
+import { readChronicleHash, startChronicle } from "./macro/chronicle.js";
 
 const BAL = DEFAULT_BALANCE;
 
-/** Client-only macro spectator — skip competitive lobby entirely. */
+/**
+ * Chronicle mounts over the top of the page rather than replacing it, so
+ * leaving it restores whatever was underneath instead of reloading.
+ */
+let competitiveBooted = false;
+function bootCompetitiveOnce(): void {
+  if (competitiveBooted) return;
+  competitiveBooted = true;
+  bootCompetitive();
+}
+
 const chronicleBoot = readChronicleHash();
 if (chronicleBoot) {
-  const appRoot = document.getElementById("app")!;
-  startChronicle(appRoot, chronicleBoot);
+  startChronicle(document.body, chronicleBoot, {
+    onExit: bootCompetitiveOnce,
+  });
 } else {
-  bootCompetitive();
+  bootCompetitiveOnce();
 }
 
 function bootCompetitive(): void {
@@ -125,11 +132,18 @@ app.innerHTML = `
           <label class="field field-inline">
             <span>Galaxy</span>
             <select id="chronicle-map-size">
-              <option value="small">Small (400)</option>
-              <option value="medium" selected>Medium (1000)</option>
-              <option value="large">Large (2500)</option>
+              <option value="small">Small (600 stars)</option>
+              <option value="medium" selected>Medium (1200 stars)</option>
+              <option value="large">Large (2400 stars)</option>
             </select>
           </label>
+          <label class="field field-inline">
+            <span>Seed</span>
+            <input id="chronicle-seed" type="text" inputmode="numeric" placeholder="random" size="10" />
+          </label>
+          <button type="button" class="btn btn-compact" id="chronicle-new-seed" title="Roll a fresh seed">
+            New galaxy
+          </button>
         </div>
         <div class="lobby-actions">
           <button type="submit" class="btn" id="join-btn">Join lobby</button>
@@ -444,13 +458,22 @@ watchBtn.addEventListener("click", () => {
   }
 });
 
+$<HTMLButtonElement>("chronicle-new-seed").addEventListener("click", () => {
+  const seed = (Math.floor(Math.random() * 0xffffffff) >>> 0).toString();
+  $<HTMLInputElement>("chronicle-seed").value = seed;
+});
+
 chronicleBtn.addEventListener("click", () => {
   const mapSize = $<HTMLSelectElement>("chronicle-map-size").value as
     | "small"
     | "medium"
     | "large";
-  writeChronicleHash({ mapSize });
-  startChronicle(app, { mapSize });
+  const raw = $<HTMLInputElement>("chronicle-seed").value.trim();
+  const parsed = raw === "" ? Number.NaN : Number(raw);
+  const seed = Number.isFinite(parsed) ? parsed >>> 0 : undefined;
+  startChronicle(document.body, seed !== undefined ? { mapSize, seed } : { mapSize }, {
+    onExit: bootCompetitiveOnce,
+  });
 });
 
 readyBtn.addEventListener("click", () => {

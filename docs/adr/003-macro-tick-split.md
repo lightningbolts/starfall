@@ -6,7 +6,7 @@ Accepted
 
 ## Context
 
-The competitive game (ADR 001) uses a unified **100ms** Intent → Execution tick. The macro spectator mode still wants that near-real-time cadence so expansion and fronts feel alive, but painting only discrete sim updates would look steppy. Bot work is cheaper than the competitive Intent loop (region aggregates, modest empire count), so matching **100ms** logic ticks is acceptable.
+The competitive game (ADR 001) uses a unified **100ms** Intent → Execution tick. The macro spectator mode still wants that near-real-time cadence so expansion and fronts feel alive, but painting only discrete sim updates would look steppy. Bot work is cheaper than the competitive Intent loop (star-system aggregates, modest empire count), so matching **100ms** logic ticks is acceptable.
 
 Viewers need the galaxy to *feel* continuous: territory easing, counters flowing, graphs animating.
 
@@ -23,12 +23,14 @@ Economy applies every **10** logic ticks (~1s). Bots decide every **5** logic ti
 
 ### Starting map
 
-Empires begin with a **single capital region**. All other regions are unowned wilderness and are claimed over time as bots expand — not pre-flood-filled at match start.
+Empires begin with a **single capital star system**. All other systems are unowned wilderness and are claimed over time as bots expand along hyperlanes — not pre-flood-filled at match start. Colonization spends frontier credits with a cost that rises with owned territory, so early sprawl slows and late game is decided by wars.
+
+Galaxy generation places systems on spiral arms (with min-separation), builds a planar connected hyperlane graph, and emits exact `borderEdges` for contested-front rendering. Counts: **600 / 1200 / 2400** systems; empire count `clamp(round(n / 50), 12, 48)`.
 
 ### Why not reuse ADR 001
 
 - No human intents, no lockstep multiplayer, no fogged deltas.
-- Region aggregates replace per-system fleets and multi-tick executions.
+- Star-system aggregates replace per-fleet multi-tick executions; hyperlanes replace free-space movement.
 - A separate package (`@starfall/macro-sim`) keeps the Intent/Execution engine unpolluted.
 
 ### Client loop (sketch)
@@ -40,7 +42,7 @@ every rAF: u = ease((now - t0) / logicMs); view = lerpSnapshot(prev, next, u)
 
 ## Consequences
 
-- Sim must expose immutable snapshots suitable for interpolation (numeric fields, contested %, ownership for color blend).
+- Sim must expose immutable snapshots suitable for interpolation (numeric fields, contested %, ownership for color blend). Static geometry (`GalaxyGeometry`) is shared by reference across snapshots.
 - Determinism is seed-based on the logic clock only; wall-clock render timing does not affect sim outcomes.
 - Per-tick rates (events, contested drift, modifier durations) are tuned for 100ms ticks, not multi-second ticks.
 - Server hosting / spectator CDN remain out of scope for v1 (client-only).

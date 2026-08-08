@@ -1,3 +1,4 @@
+import { emit } from "./log.js";
 import type { Empire, EmpireId, MacroEvent, MacroState } from "./types.js";
 
 export function tryDiplomacy(
@@ -18,18 +19,20 @@ export function tryDiplomacy(
     }
     const overextended = frontierPressure(state, allyId) > 2.2;
     const breakChance =
-      (1 - empire.traits.loyalty) * 0.15 +
-      (empire.archetype === "opportunistic" && overextended ? 0.35 : 0) +
-      empire.traits.greed * 0.05;
+      (1 - empire.traits.loyalty) * 0.09 +
+      (empire.archetype === "opportunistic" && overextended ? 0.22 : 0) +
+      empire.traits.greed * 0.03;
     if (rng() < breakChance) {
       breakAlliance(state, empire.id, allyId);
-      events.push({
-        tick,
-        kind: "alliance_broken",
-        empireIds: [empire.id, allyId],
-        regionId: null,
-        text: `${empire.name} breaks its pact with ${ally.name}.`,
-      });
+      events.push(
+        emit(state, {
+          tick,
+          kind: "alliance_broken",
+          empireIds: [empire.id, allyId],
+          systemId: null,
+          text: `${empire.name} breaks its pact with ${ally.name}.`,
+        }),
+      );
     }
   }
 
@@ -50,13 +53,15 @@ export function tryDiplomacy(
     other.traits.greed * 0.1;
   if (rng() < accept) {
     formAlliance(empire, other);
-    events.push({
-      tick,
-      kind: "alliance_formed",
-      empireIds: [empire.id, other.id],
-      regionId: null,
-      text: `${empire.name} and ${other.name} form a pact.`,
-    });
+    events.push(
+      emit(state, {
+        tick,
+        kind: "alliance_formed",
+        empireIds: [empire.id, other.id],
+        systemId: null,
+        text: `${empire.name} and ${other.name} form a pact.`,
+      }),
+    );
   }
   return events;
 }
@@ -73,22 +78,21 @@ function breakAlliance(state: MacroState, a: EmpireId, b: EmpireId): void {
   eb.allies = eb.allies.filter((x) => x !== a);
 }
 
+/** Hostile lane crossings per owned system. */
 function frontierPressure(state: MacroState, empireId: EmpireId): number {
+  const empire = state.empires[empireId];
+  if (!empire || empire.ownedSystems.size === 0) return 0;
   let hostile = 0;
-  let owned = 0;
-  for (const rid of state.regionOrder) {
-    const r = state.regions[rid]!;
-    if (r.ownerId !== empireId) continue;
-    owned++;
-    for (const nid of r.neighbors) {
-      const n = state.regions[nid]!;
+  for (const sid of empire.ownedSystems) {
+    for (const nid of state.systems[sid]!.hyperlanes) {
+      const n = state.systems[nid]!;
       if (n.ownerId && n.ownerId !== empireId) {
         const other = state.empires[n.ownerId];
         if (other && !other.allies.includes(empireId)) hostile++;
       }
     }
   }
-  return owned === 0 ? 0 : hostile / owned;
+  return hostile / empire.ownedSystems.size;
 }
 
 function pickAllyCandidate(
@@ -96,25 +100,22 @@ function pickAllyCandidate(
   empire: Empire,
   rng: () => number,
 ): EmpireId | null {
-  const candidates: EmpireId[] = [];
-  for (const id of state.empireOrder) {
-    if (id === empire.id) continue;
-    const e = state.empires[id]!;
-    if (!e.alive) continue;
-    if (empire.allies.includes(id)) continue;
-    if (borders(state, empire.id, id)) candidates.push(id);
-  }
+  const neighbors = borderingEmpires(state, empire);
+  const candidates = neighbors.filter(
+    (id) => id !== empire.id && !empire.allies.includes(id),
+  );
   if (candidates.length === 0) return null;
   return candidates[Math.floor(rng() * candidates.length)]!;
 }
 
-function borders(state: MacroState, a: EmpireId, b: EmpireId): boolean {
-  for (const rid of state.regionOrder) {
-    const r = state.regions[rid]!;
-    if (r.ownerId !== a) continue;
-    for (const nid of r.neighbors) {
-      if (state.regions[nid]!.ownerId === b) return true;
+function borderingEmpires(state: MacroState, empire: Empire): EmpireId[] {
+  const out = new Set<EmpireId>();
+  for (const sid of empire.ownedSystems) {
+    for (const nid of state.systems[sid]!.hyperlanes) {
+      const ownerId = state.systems[nid]!.ownerId;
+      if (!ownerId || ownerId === empire.id) continue;
+      if (state.empires[ownerId]?.alive) out.add(ownerId);
     }
   }
-  return false;
+  return [...out];
 }
