@@ -1,0 +1,17 @@
+{
+  "name": "starfall",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Starfall — graph-based space territory conquest",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "build": "pnpm -r run build",
+    "test": "pnpm --filter @starfall/sim test",
+    "sim:ffa": "pnpm --filter @starfall/cli start",
+    "typecheck": "pnpm -r run typecheck"
+  }
+}

@@ -1,0 +1,94 @@
+category,key,value,unit,notes
+pacing,ms_per_tick,100,ms,OpenFront msPerTick
+pacing,turn_interval_ms,100,ms,OpenFront turnIntervalMs
+pacing,ticks_per_second,10,ticks,seconds*10 convention
+pacing,round_minutes_default,20,min,band 15-30
+pacing,round_ticks,12000,ticks,20*60*10
+pacing,target_players,100,count,band 50-100
+pacing,target_nodes,250,count,band 150-300
+upgrade,growth,1.5,multiplier,cost(n)=base*growth^(n-1) uncapped
+upgrade,max_level,0,level,0 means uncapped
+upgrade,visual_size_softcap_level,12,level,radius stops growing past this level
+vision,base_hops,1,hops,from each owned node
+vision,survey_drones_bonus_hops,1,hops,
+homeworld,fighter_build_ticks_factor,2,multiplier,half speed vs L1 shipyard
+homeworld,allows_fighter_only,1,bool,
+lane,unlimited_capacity,1,bool,no fleet caps on lanes
+cargo,launch_threshold,4,credits,stockpile before auto ship
+cargo,ticks_per_hop,40,ticks,base cargo speed
+cargo,loot_fraction,1.0,multiplier,attacker receives full cargo
+tech,cost_base,60,credits,cost(tier)=base*growth^(tier-1)
+tech,cost_growth,2.25,multiplier,
+tech.advanced_propulsion,tier,1,tier,
+tech.advanced_propulsion,ticks_per_hop_factor,0.8,multiplier,-20% war fleets only not cargo
+tech.fortified_colonies,tier,1,tier,
+tech.fortified_colonies,garrison_factor,1.25,multiplier,+25% garrison
+tech.survey_drones,tier,1,tier,
+tech.survey_drones,vision_bonus_hops,1,hops,
+tech.heavy_warships,tier,2,tier,unlocks battleship builds
+tech.lane_logistics,tier,2,tier,
+tech.lane_logistics,cargo_ticks_per_hop_factor,0.75,multiplier,-25% cargo travel
+tech.population_efficiency,tier,2,tier,
+tech.population_efficiency,core_pop_factor,1.25,multiplier,+25% core pop pulse
+tech.orbital_shielding,tier,3,tier,
+tech.orbital_shielding,garrison_flat,15,population,
+tech.rapid_deployment,tier,3,tier,
+tech.rapid_deployment,build_ticks_factor,0.75,multiplier,-25% build ticks
+tech.relic_scanning,tier,3,tier,reveal all relic nodes
+ship.fighter,credit_cost,10,credits,
+ship.fighter,power,10,power,
+ship.fighter,build_ticks,20,ticks,2.0s
+ship.fighter,ticks_per_hop,20,ticks,2.0s per hop
+ship.cruiser,credit_cost,40,credits,
+ship.cruiser,power,40,power,
+ship.cruiser,build_ticks,60,ticks,6.0s
+ship.cruiser,ticks_per_hop,40,ticks,4.0s per hop
+ship.battleship,credit_cost,120,credits,
+ship.battleship,power,120,power,
+ship.battleship,build_ticks,160,ticks,16.0s
+ship.battleship,ticks_per_hop,80,ticks,8.0s per hop
+ship.battleship,requires_tech,heavy_warships,tech_id,
+role.homeworld,credits_per_pulse,1,credits,every 10 ticks
+role.homeworld,population_per_pulse,1,population,every 10 ticks
+role.homeworld,population_cap,20,population,level 1
+role.homeworld,garrison_base,40,population,level 1
+role.homeworld,garrison_per_level,12,population,added per level above 1
+role.homeworld,upgrade_base_cost,50,credits,cost to reach level 2
+role.core_world,credits_per_pulse,1,credits,
+role.core_world,population_per_pulse,3,population,
+role.core_world,population_cap,40,population,level 1
+role.core_world,garrison_base,20,population,level 1
+role.core_world,garrison_per_level,6,population,
+role.core_world,upgrade_base_cost,40,credits,
+role.resource,credits_per_pulse,4,credits,to cargo stockpile not bank
+role.resource,income_mode,cargo,enum,
+role.resource,population_per_pulse,0,population,
+role.resource,population_cap,0,population,
+role.resource,garrison_base,15,population,
+role.resource,garrison_per_level,5,population,
+role.resource,upgrade_base_cost,40,credits,
+role.shipyard,credits_per_pulse,1,credits,
+role.shipyard,build_slots,1,slots,level 1
+role.shipyard,garrison_base,25,population,
+role.shipyard,garrison_per_level,8,population,
+role.shipyard,upgrade_base_cost,60,credits,
+role.relay,credits_per_pulse,0,credits,
+role.relay,garrison_base,10,population,
+role.relay,garrison_per_level,4,population,
+role.relay,upgrade_base_cost,30,credits,
+role.relic,credits_per_pulse,10,credits,to cargo stockpile not bank
+role.relic,income_mode,cargo,enum,
+role.relic,garrison_base,30,population,
+role.relic,garrison_per_level,10,population,
+role.relic,upgrade_base_cost,80,credits,
+role.relic,count_per_250_nodes,5,count,band 3-8
+start,credits,80,credits,per player
+start,population,25,population,at homeworld
+start,fighters,5,ships,at homeworld
+score,owned_node,10,points,
+score,owned_relic_bonus,15,points,extra on top of owned_node
+score,upgrade_level_above_1,3,points,per level above 1 summed
+score,per_10_credits,1,points,
+score,per_10_population,1,points,
+score,per_100_fleet_power,2,points,
+score,per_tech,5,points,
