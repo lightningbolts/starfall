@@ -213,7 +213,8 @@ export type MacroEventKind =
   | "fleet_battle"
   | "border_clash"
   | "tech_researched"
-  | "planetary_built";
+  | "planetary_built"
+  | "territory_abandoned";
 
 export interface MacroEvent {
   /** Monotonic id so the client can append only what it has not shown yet. */
@@ -258,6 +259,7 @@ export interface SnapshotEmpire {
   colorSat: number;
   colorLight: number;
   archetype: ArchetypeId;
+  traits: EmpireTraits;
   capitalSystemId: SystemId;
   allies: EmpireId[];
   alive: boolean;
@@ -268,6 +270,7 @@ export interface SnapshotEmpire {
   researched: MacroTechId[];
   fleet: MacroFleetComposition;
   fleetPower: number;
+  modifiers: EmpireModifiers;
 }
 
 /** Immutable client-facing snapshot after a logic tick. */
@@ -330,7 +333,7 @@ export const DEFAULT_MACRO_CONFIG: MacroConfig = {
   economyPulseTicks: 10,
   botCadenceTicks: 5,
   diplomacyCadenceTicks: 60,
-  maxClaimsPerPulse: 2,
+  maxClaimsPerPulse: 3,
 };
 
 export const MAX_PLANETARY_DEVS = 4;

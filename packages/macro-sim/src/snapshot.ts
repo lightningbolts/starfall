@@ -39,6 +39,7 @@ export function buildSnapshot(state: MacroState): MacroSnapshot {
       colorSat: e.colorSat,
       colorLight: e.colorLight,
       archetype: e.archetype,
+      traits: { ...e.traits },
       capitalSystemId: e.capitalSystemId,
       allies: [...e.allies],
       alive: e.alive,
@@ -49,6 +50,7 @@ export function buildSnapshot(state: MacroState): MacroSnapshot {
       researched: [...e.researched],
       fleet: { ...e.fleet },
       fleetPower: fleetPower(e.fleet),
+      modifiers: { ...e.modifiers },
     };
   }
 

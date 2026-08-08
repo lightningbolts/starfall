@@ -10,9 +10,9 @@ import {
 } from "./tech.js";
 
 /** Per economy pulse (~1s at 100ms logic ticks). */
-const BASE_POP = 2.4;
-const BASE_CREDITS = 1.9;
-const BASE_GARRISON_SHARE = 0.22;
+const BASE_POP = 2.6;
+const BASE_CREDITS = 2.35;
+const BASE_GARRISON_SHARE = 0.24;
 
 export function systemProductionMult(empire: Empire | undefined): number {
   if (!empire) return 1;
@@ -52,7 +52,9 @@ export function applyEconomyTick(
   system.credits += creditGain;
 
   const sprawl = Math.max(1, empire.ownedSystems.size);
-  const upkeep = 0.15 + sprawl * 0.012 + system.population * 0.002;
+  // Light upkeep — heavy enough to matter late, not enough to freeze early sprawl.
+  const upkeep =
+    0.08 + sprawl * 0.006 + Math.max(0, system.population - 40) * 0.001;
   system.credits = Math.max(0, system.credits - upkeep);
 
   const gMult =

@@ -1,4 +1,4 @@
-import { beginEngagement, pressureBorder, reinforceSystem, tryColonize } from "./combat.js";
+import { abandonSystem, beginEngagement, pressureBorder, reinforceSystem, tryColonize } from "./combat.js";
 import { tryDiplomacy } from "./diplomacy.js";
 import { tryBuildShips } from "./economy.js";
 import { fleetPower } from "./ships.js";
@@ -41,19 +41,56 @@ function decideMilitary(
   const events: MacroEvent[] = [];
   if (empire.ownedSystems.size === 0) return events;
 
-  // Technocrats research first.
-  if (
-    empire.traits.curiosity > 0.45 ||
-    empire.archetype === "technocrat"
-  ) {
-    if (rng() < 0.35 + empire.traits.curiosity * 0.5) {
-      const tech = pickResearchTarget(empire, rng);
-      if (tech) {
-        const ev = tryResearch(state, empire, tech);
-        if (ev) events.push(ev);
+  const frontier = uncolonizedFrontier(state, empire);
+  const small = empire.ownedSystems.size < 18;
+  const isolation =
+    empire.archetype === "isolationist" || empire.archetype === "cautious";
+
+  // Overextended empires prune weak fringe worlds back to wilderness.
+  const withdrawn = maybeWithdraw(state, empire, rng);
+  if (withdrawn.length) events.push(...withdrawn);
+
+  // Colonize first while wilderness remains — research/ships used to starve the frontier.
+  const expandChance =
+    (isolation ? 0.45 : 0.72) +
+    empire.traits.aggression * 0.12 +
+    empire.traits.ambition * 0.22 +
+    empire.traits.risk * 0.06 +
+    (small ? 0.2 : 0) -
+    (empire.archetype === "technocrat" ? 0.05 : 0);
+
+  if (frontier.length > 0 && rng() < expandChance) {
+    let claims = 0;
+    const maxClaims = small
+      ? Math.max(config.maxClaimsPerPulse, 3)
+      : config.maxClaimsPerPulse;
+    const pool = [...frontier];
+    while (claims < maxClaims && pool.length > 0) {
+      const idx = Math.floor(rng() * pool.length);
+      const target = pool.splice(idx, 1)[0]!;
+      if (!tryColonize(state, empire, target)) {
+        // Try another frontier star before giving up this pulse.
+        if (pool.length === 0) break;
+        continue;
       }
+      claims++;
     }
-  } else if (rng() < 0.12 + empire.traits.curiosity * 0.25) {
+  }
+
+  // Research after expansion — less aggressive when still sprawling.
+  const researchChance = frontier.length > 0 && small
+    ? 0.08 + empire.traits.curiosity * 0.2
+    : 0.18 + empire.traits.curiosity * 0.4;
+  if (
+    (empire.traits.curiosity > 0.4 || empire.archetype === "technocrat") &&
+    rng() < researchChance
+  ) {
+    const tech = pickResearchTarget(empire, rng);
+    if (tech) {
+      const ev = tryResearch(state, empire, tech);
+      if (ev) events.push(ev);
+    }
+  } else if (rng() < 0.08 + empire.traits.curiosity * 0.2) {
     const tech = pickResearchTarget(empire, rng);
     if (tech) {
       const ev = tryResearch(state, empire, tech);
@@ -61,8 +98,12 @@ function decideMilitary(
     }
   }
 
-  // Planetary developments
-  if (rng() < 0.25 + empire.traits.curiosity * 0.15 + empire.traits.ambition * 0.1) {
+  // Planetary builds — prefer cores once the frontier is under control.
+  const buildChance =
+    frontier.length > 0 && small
+      ? 0.08
+      : 0.22 + empire.traits.curiosity * 0.15 + empire.traits.ambition * 0.1;
+  if (rng() < buildChance) {
     const sid = randomOwned(empire, rng);
     if (sid) {
       const system = state.systems[sid]!;
@@ -74,31 +115,9 @@ function decideMilitary(
     }
   }
 
-  tryBuildShips(state, empire, rng);
-
-  const isolation =
-    empire.archetype === "isolationist" || empire.archetype === "cautious";
-  const expandChance =
-    (isolation ? 0.28 : 0.4) +
-    empire.traits.aggression * 0.15 +
-    empire.traits.ambition * 0.2 +
-    empire.traits.risk * 0.08 -
-    (empire.archetype === "technocrat" ? 0.08 : 0);
-
-  if (rng() < expandChance) {
-    const frontier = uncolonizedFrontier(state, empire);
-    let claims = 0;
-    const maxClaims =
-      empire.traits.ambition > 0.7
-        ? config.maxClaimsPerPulse
-        : Math.max(1, config.maxClaimsPerPulse - 1);
-    while (claims < maxClaims && frontier.length > 0) {
-      const idx = Math.floor(rng() * frontier.length);
-      const target = frontier.splice(idx, 1)[0]!;
-      if (!tryColonize(state, empire, target)) break;
-      claims++;
-    }
-    // Do NOT return early — allow attack same pulse.
+  // Ship builds are lower priority while colonizing.
+  if (!(frontier.length > 0 && small && rng() < 0.55)) {
+    tryBuildShips(state, empire, rng);
   }
 
   const reinforceChance =
@@ -109,9 +128,7 @@ function decideMilitary(
     const target = randomOwned(empire, rng);
     if (target) {
       const fraction =
-        0.1 +
-        empire.traits.risk * 0.04 +
-        (isolation ? 0.16 : 0);
+        0.1 + empire.traits.risk * 0.04 + (isolation ? 0.16 : 0);
       reinforceSystem(state.systems[target]!, fraction);
     }
   }
@@ -154,7 +171,6 @@ function decideMilitary(
 
   pressureBorder(state, empire.id, target, amount, rng);
 
-  // Conquerors finish wounded empires.
   if (empire.traits.ambition > 0.75 && rng() < 0.4) {
     const sys = state.systems[target]!;
     if (sys.ownerId && state.empires[sys.ownerId]!.ownedSystems.size < 5) {
@@ -182,6 +198,57 @@ function uncolonizedFrontier(state: MacroState, empire: Empire): SystemId[] {
     }
   }
   return out;
+}
+
+/** Pull back from a weak fringe world when sprawl or caution says so. */
+function maybeWithdraw(
+  state: MacroState,
+  empire: Empire,
+  rng: () => number,
+): MacroEvent[] {
+  const size = empire.ownedSystems.size;
+  if (size < 6) return [];
+
+  const isolation =
+    empire.archetype === "isolationist" || empire.archetype === "cautious";
+  const overextended = size > 22;
+  const chance =
+    (isolation ? 0.12 : 0.04) +
+    (overextended ? 0.1 : 0) +
+    empire.traits.xenophobia * 0.04 -
+    empire.traits.ambition * 0.05;
+  if (rng() > Math.max(0.02, chance)) return [];
+
+  let bestId: SystemId | null = null;
+  let bestScore = Infinity;
+  for (const sid of empire.ownedSystems) {
+    if (sid === empire.capitalSystemId) continue;
+    const s = state.systems[sid]!;
+    if (s.engagement) continue;
+    let friendly = 0;
+    let hostile = 0;
+    let wild = 0;
+    for (const nid of s.hyperlanes) {
+      const o = state.systems[nid]!.ownerId;
+      if (!o) wild++;
+      else if (o === empire.id) friendly++;
+      else hostile++;
+    }
+    // Prefer weakly held, poorly connected, or contested fringe.
+    const score =
+      s.garrison +
+      friendly * 12 -
+      wild * 4 -
+      hostile * 6 -
+      (s.contested ? 10 : 0) -
+      s.developments.size * 8;
+    if (score < bestScore) {
+      bestScore = score;
+      bestId = sid;
+    }
+  }
+  if (!bestId) return [];
+  return abandonSystem(state, state.systems[bestId]!, "withdraw");
 }
 
 function randomOwned(empire: Empire, rng: () => number): SystemId | null {

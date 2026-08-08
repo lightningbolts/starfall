@@ -14,7 +14,8 @@ export const UNOWNED = 0x6b7585;
 export const SELF = 0xe8a838;
 export const FOCUS = 0xf0d080;
 export const DANGER = 0xc45c4a;
-export const COMBAT_FLASH = 0xf5f2ea;
+/** Soft amber flash — never near-white; additive map cues must stay muted. */
+export const COMBAT_FLASH = 0xb07050;
 export const HUD_BORDER = 0x2a3344;
 
 /** Event cue colors (map pulses + feed accents). */
@@ -24,7 +25,8 @@ export const EVENT_BLITZ = 0xe05252;
 export const EVENT_PIRATES = 0x9a8f7a;
 export const EVENT_TECH = 0x5eb0e0;
 export const EVENT_COUP = 0xc9a0dc;
-export const EVENT_BATTLE = 0xf0c040;
+export const EVENT_BATTLE = 0xc47848;
+export const EVENT_ABANDON = 0x8a909c;
 
 export interface Rgb {
   r: number;
@@ -153,6 +155,8 @@ export function eventPulseColor(kind: string): number {
     case "capital_fallen":
     case "front_collapse":
       return EVENT_BATTLE;
+    case "territory_abandoned":
+      return EVENT_ABANDON;
     default:
       return COMBAT_FLASH;
   }

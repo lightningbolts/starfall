@@ -366,11 +366,15 @@ describe("createMacroMatch", () => {
     });
     const ownedCount = (): number =>
       state.systemOrder.filter((id) => state.systems[id]!.ownerId).length;
+    const empireSizes = (): number[] =>
+      state.empireOrder.map((id) => state.empires[id]!.ownedSystems.size);
 
     expect(ownedCount()).toBe(8);
     for (let i = 0; i < 100; i++) stepLogic(state, config);
     const early = ownedCount();
-    expect(early).toBeGreaterThan(8);
+    // Frontier should move — not stuck on homeworlds.
+    expect(early).toBeGreaterThan(40);
+    expect(Math.min(...empireSizes())).toBeGreaterThan(1);
 
     for (let i = 0; i < 100; i++) stepLogic(state, config);
     const mid = ownedCount();
@@ -379,7 +383,7 @@ describe("createMacroMatch", () => {
 
     expect(mid).toBeGreaterThanOrEqual(early);
     // Late growth should not accelerate unchecked; allow slack for conquest.
-    expect(late - mid).toBeLessThanOrEqual(mid - early + 4);
+    expect(late - mid).toBeLessThanOrEqual(mid - early + 12);
   });
 
   it("assigns full-gamut color triples including greys and earth tones", () => {
@@ -456,6 +460,28 @@ describe("createMacroMatch", () => {
     if (still) {
       expect(still.ticksRemaining).toBeLessThan(before);
     }
+  });
+
+  it("can abandon a system back to neutral wilderness", async () => {
+    const { state } = createMacroMatch({
+      seed: 19,
+      systemCount: 80,
+      empireCount: 4,
+    });
+    const empire = state.empires[state.empireOrder[0]!]!;
+    const home = state.systems[empire.capitalSystemId]!;
+    const neighborId = home.hyperlanes[0]!;
+    const neighbor = state.systems[neighborId]!;
+    const { setSystemOwner, abandonSystem } = await import("./combat.js");
+    setSystemOwner(state, neighbor, empire.id);
+    neighbor.garrison = 12;
+    expect(empire.ownedSystems.has(neighborId)).toBe(true);
+
+    const events = abandonSystem(state, neighbor, "withdraw");
+    expect(events[0]?.kind).toBe("territory_abandoned");
+    expect(neighbor.ownerId).toBeNull();
+    expect(empire.ownedSystems.has(neighborId)).toBe(false);
+    expect(empire.alive).toBe(true);
   });
 
   it("emits match_won separately from empire_eliminated", () => {

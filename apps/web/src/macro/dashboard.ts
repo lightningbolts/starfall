@@ -5,10 +5,14 @@ import {
   MACRO_SHIP_TYPES,
   militaryTechScore,
   PLANETARY_LABEL,
+  TECH_LABEL,
+  TECH_TIER,
   type EmpireId,
+  type EmpireTraits,
   type InterpolatedSnapshot,
   type MacroEvent,
   type MacroShipType,
+  type PlanetaryDevId,
   type SystemId,
 } from "@starfall/macro-sim";
 import { empireSwatchCss } from "./palette.js";
@@ -70,6 +74,7 @@ export interface DashboardState {
     overlays: boolean;
     military: boolean;
     battles: boolean;
+    empire: boolean;
   };
   paused: boolean;
   speed: 1 | 2 | 4 | 10;
@@ -112,6 +117,7 @@ export function createDashboardState(): DashboardState {
       overlays: false,
       military: false,
       battles: false,
+      empire: false,
     },
     paused: false,
     speed: 1,
@@ -227,6 +233,7 @@ export class MacroDashboard {
       this.renderTrends(view);
       this.renderMilitary(view);
       this.renderBattles(view);
+      this.renderEmpireDetail(view);
       this.renderFocusLabel(view);
       this.renderSelection(view);
     }
@@ -258,7 +265,15 @@ export class MacroDashboard {
       .forEach((btn) => {
         btn.addEventListener("click", () => {
           const key = btn.dataset.panelToggle as keyof DashboardState["panels"];
-          this.state.panels[key] = !this.state.panels[key];
+          const next = !this.state.panels[key];
+          // Right-dock insight panels share one slot — opening one closes the others.
+          if (next && isExclusivePanel(key)) {
+            for (const other of EXCLUSIVE_PANELS) {
+              this.state.panels[other] = other === key;
+            }
+          } else {
+            this.state.panels[key] = next;
+          }
           this.changed();
         });
       });
@@ -295,6 +310,7 @@ export class MacroDashboard {
 
     this.root.querySelector("#ch-clear-focus")?.addEventListener("click", () => {
       this.state.focusEmpireId = null;
+      this.state.panels.empire = false;
       this.changed();
     });
 
@@ -345,6 +361,13 @@ export class MacroDashboard {
 
   setFocus(id: EmpireId | null): void {
     this.state.focusEmpireId = id;
+    if (id) {
+      for (const other of EXCLUSIVE_PANELS) {
+        this.state.panels[other] = other === "empire";
+      }
+    } else {
+      this.state.panels.empire = false;
+    }
     this.changed();
   }
 
@@ -750,6 +773,169 @@ export class MacroDashboard {
     });
   }
 
+  private renderEmpireDetail(view: InterpolatedSnapshot): void {
+    const host = this.root.querySelector("#ch-empire-detail");
+    if (!host) return;
+
+    const id = this.state.focusEmpireId;
+    if (!id || !view.empires[id]) {
+      host.innerHTML = `<p class="ch-hint">Click an empire on the roster, military table, or map to inspect it.</p>`;
+      return;
+    }
+
+    const e = view.empires[id]!;
+    const color = empireCss(e);
+    const capital = view.geometry.byId[e.capitalSystemId]?.name ?? e.capitalSystemId;
+    const allyNames = e.allies
+      .map((aid) => view.empires[aid]?.name)
+      .filter(Boolean) as string[];
+
+    const devCounts = new Map<PlanetaryDevId, number>();
+    let frontier = 0;
+    let contested = 0;
+    let engCount = 0;
+    const engLines: string[] = [];
+    for (const sid of view.systemOrder) {
+      const s = view.systems[sid]!;
+      if (s.ownerId !== id) {
+        if (
+          s.engagement &&
+          (s.engagement.attackerId === id || s.engagement.defenderId === id)
+        ) {
+          engCount++;
+          const name = view.geometry.byId[sid]?.name ?? sid;
+          engLines.push(
+            `${s.engagement.mode} at ${name} (${s.engagement.ticksRemaining}t)`,
+          );
+        }
+        continue;
+      }
+      for (const d of s.developments) {
+        devCounts.set(d, (devCounts.get(d) ?? 0) + 1);
+      }
+      if (s.contested) contested++;
+      const lanes = view.geometry.byId[sid]?.hyperlanes ?? [];
+      const hasWild = lanes.some((nid) => !view.systems[nid]!.ownerId);
+      if (hasWild) frontier++;
+      if (s.engagement) {
+        engCount++;
+        const name = view.geometry.byId[sid]?.name ?? sid;
+        engLines.push(
+          `${s.engagement.mode} at ${name} (${s.engagement.ticksRemaining}t)`,
+        );
+      }
+    }
+
+    const techs = [...e.researched].sort(
+      (a, b) => TECH_TIER[a] - TECH_TIER[b] || a.localeCompare(b),
+    );
+    const techHtml =
+      techs.length > 0
+        ? techs
+            .map(
+              (t) =>
+                `<span class="ch-chip ch-chip-tier-${TECH_TIER[t]}">${escapeHtml(TECH_LABEL[t] ?? t)}</span>`,
+            )
+            .join("")
+        : `<span class="ch-muted">None yet</span>`;
+
+    const ships = MACRO_SHIP_TYPES.filter((t) => (e.fleet[t] ?? 0) > 0)
+      .map(
+        (t) =>
+          `<span class="ch-chip">${SHIP_COL[t]} <b>${e.fleet[t]}</b></span>`,
+      )
+      .join("");
+
+    const mods = activeModifiers(e.modifiers);
+    const traitKeys: (keyof EmpireTraits)[] = [
+      "aggression",
+      "ambition",
+      "risk",
+      "curiosity",
+      "greed",
+      "xenophobia",
+      "loyalty",
+    ];
+
+    host.innerHTML = `
+      <div class="ch-emp-head">
+        <span class="ch-swatch ch-swatch-lg" style="background:${color}"></span>
+        <div>
+          <div class="ch-emp-name" style="color:${color}">${escapeHtml(e.name)}</div>
+          <div class="ch-muted">${escapeHtml(archetypeLabel(e.archetype))}${e.alive ? "" : " · eliminated"}</div>
+        </div>
+        <button type="button" class="btn btn-compact" id="ch-close-empire" title="Close">×</button>
+      </div>
+      <div class="ch-emp-stats">
+        <span>Sys <b>${Math.round(e.territory)}</b></span>
+        <span>Pop <b>${fmt(e.population)}</b></span>
+        <span>¢ <b>${fmt(e.credits)}</b></span>
+        <span>Gar <b>${fmt(e.garrison)}</b></span>
+        <span>Power <b>${fmt(e.fleetPower)}</b></span>
+        <span>Tech <b>${militaryTechScore(e.researched)}</b></span>
+      </div>
+      <div class="ch-emp-meta">Capital <b>${escapeHtml(capital)}</b> · Frontier <b>${frontier}</b> · Contested <b>${contested}</b></div>
+
+      <h3 class="ch-emp-section">Personality</h3>
+      <div class="ch-trait-grid">
+        ${traitKeys
+          .map((k) => traitBar(k, e.traits[k]))
+          .join("")}
+      </div>
+
+      <h3 class="ch-emp-section">Fleet</h3>
+      <div class="ch-chip-row">${ships || `<span class="ch-muted">No hulls listed</span>`}</div>
+      <div class="ch-muted ch-emp-fleet-mix">${escapeHtml(formatComposition(e.fleet))}</div>
+
+      <h3 class="ch-emp-section">Technology</h3>
+      <div class="ch-chip-row">${techHtml}</div>
+
+      <h3 class="ch-emp-section">Planetary developments</h3>
+      <div class="ch-chip-row">${
+        devCounts.size
+          ? [...devCounts.entries()]
+              .sort((a, b) => b[1] - a[1])
+              .map(
+                ([d, n]) =>
+                  `<span class="ch-chip">${escapeHtml(PLANETARY_LABEL[d] ?? d)} <b>×${n}</b></span>`,
+              )
+              .join("")
+          : `<span class="ch-muted">No developments yet</span>`
+      }</div>
+
+      <h3 class="ch-emp-section">Diplomacy</h3>
+      <div class="ch-emp-allies">${
+        allyNames.length
+          ? allyNames
+              .map((n) => `<span class="ch-chip">${escapeHtml(n)}</span>`)
+              .join("")
+          : `<span class="ch-muted">No allies</span>`
+      }</div>
+
+      <h3 class="ch-emp-section">Active modifiers</h3>
+      <div class="ch-emp-mods">${
+        mods.length
+          ? mods.map((m) => `<div class="ch-mod-line">${escapeHtml(m)}</div>`).join("")
+          : `<span class="ch-muted">None</span>`
+      }</div>
+
+      <h3 class="ch-emp-section">Engagements</h3>
+      <div class="ch-emp-eng">${
+        engCount
+          ? engLines
+              .slice(0, 8)
+              .map((l) => `<div class="ch-mod-line">${escapeHtml(l)}</div>`)
+              .join("")
+          : `<span class="ch-muted">None active</span>`
+      }</div>
+    `;
+
+    host.querySelector("#ch-close-empire")?.addEventListener("click", () => {
+      this.state.panels.empire = false;
+      this.changed();
+    });
+  }
+
   private handleEliminationAlerts(
     view: InterpolatedSnapshot,
     newEvents: MacroEvent[],
@@ -868,6 +1054,48 @@ function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
+function traitBar(key: keyof EmpireTraits, value: number): string {
+  const pct = Math.round(Math.min(1, Math.max(0, value)) * 100);
+  const label = key.charAt(0).toUpperCase() + key.slice(1);
+  return `<div class="ch-trait"><span>${label}</span><div class="ch-trait-track"><i style="width:${pct}%"></i></div><b>${pct}</b></div>`;
+}
+
+function activeModifiers(m: {
+  productionMult: number;
+  productionTicksLeft: number;
+  garrisonMult: number;
+  garrisonTicksLeft: number;
+  attackPressure: number;
+  attackPressureTicksLeft: number;
+}): string[] {
+  const out: string[] = [];
+  if (m.productionTicksLeft > 0) {
+    out.push(
+      `Production ×${m.productionMult.toFixed(2)} (${m.productionTicksLeft}t)`,
+    );
+  }
+  if (m.garrisonTicksLeft > 0) {
+    out.push(
+      `Garrison ×${m.garrisonMult.toFixed(2)} (${m.garrisonTicksLeft}t)`,
+    );
+  }
+  if (m.attackPressureTicksLeft > 0) {
+    out.push(
+      `Attack pressure ×${m.attackPressure.toFixed(2)} (${m.attackPressureTicksLeft}t)`,
+    );
+  }
+  return out;
+}
+
+const EXCLUSIVE_PANELS = ["empire", "trends", "military", "battles"] as const;
+type ExclusivePanel = (typeof EXCLUSIVE_PANELS)[number];
+
+function isExclusivePanel(
+  key: keyof DashboardState["panels"],
+): key is ExclusivePanel {
+  return (EXCLUSIVE_PANELS as readonly string[]).includes(key);
+}
+
 function shellHtml(): string {
   return `
     <div class="chronicle-top">
@@ -897,6 +1125,7 @@ function shellHtml(): string {
       <button type="button" class="rail-tab is-active" data-panel-toggle="roster">Roster</button>
       <button type="button" class="rail-tab is-active" data-panel-toggle="feed">Feed</button>
       <button type="button" class="rail-tab" data-panel-toggle="trends">Trends</button>
+      <button type="button" class="rail-tab" data-panel-toggle="empire">Empire</button>
       <button type="button" class="rail-tab" data-panel-toggle="military">Military</button>
       <button type="button" class="rail-tab" data-panel-toggle="battles">Battles <span id="ch-battles-badge" class="ch-rail-badge" hidden></span></button>
       <button type="button" class="rail-tab" data-panel-toggle="overlays">Overlays</button>
@@ -935,27 +1164,33 @@ function shellHtml(): string {
         <div id="ch-feed" class="ch-feed"></div>
       </aside>
     </div>
-    <aside class="chronicle-panel" data-panel="trends" hidden>
-      <h2>Trends</h2>
-      <div id="ch-trends"></div>
-    </aside>
-    <aside class="chronicle-panel" data-panel="military" hidden>
-      <h2>Military</h2>
-      <div id="ch-military"></div>
-    </aside>
-    <aside class="chronicle-panel" data-panel="battles" hidden>
-      <h2>Active engagements</h2>
-      <div id="ch-battles" class="ch-battles"></div>
-    </aside>
-    <aside class="chronicle-panel" data-panel="overlays" hidden>
-      <h2>Overlays</h2>
-      <label class="ch-check"><input type="checkbox" data-overlay="contested" /> Contested fronts</label>
-      <label class="ch-check"><input type="checkbox" data-overlay="lanes" /> Hyperlanes</label>
-      <label class="ch-check"><input type="checkbox" data-overlay="labels" /> Names</label>
-      <label class="ch-check"><input type="checkbox" data-overlay="diplomacy" /> Diplomatic pacts</label>
-      <label class="ch-check"><input type="checkbox" data-overlay="frontiers" /> Highlight frontiers</label>
-      <p class="ch-hint">Click a star to inspect it. Scroll to zoom, drag to pan.</p>
-    </aside>
+    <div class="chronicle-right">
+      <aside class="chronicle-panel chronicle-dock-panel" data-panel="trends" hidden>
+        <h2>Trends</h2>
+        <div id="ch-trends"></div>
+      </aside>
+      <aside class="chronicle-panel chronicle-dock-panel" data-panel="empire" hidden>
+        <h2>Empire dossier</h2>
+        <div id="ch-empire-detail" class="ch-empire-detail"></div>
+      </aside>
+      <aside class="chronicle-panel chronicle-dock-panel" data-panel="military" hidden>
+        <h2>Military</h2>
+        <div id="ch-military"></div>
+      </aside>
+      <aside class="chronicle-panel chronicle-dock-panel" data-panel="battles" hidden>
+        <h2>Active engagements</h2>
+        <div id="ch-battles" class="ch-battles"></div>
+      </aside>
+      <aside class="chronicle-panel chronicle-overlays-panel" data-panel="overlays" hidden>
+        <h2>Overlays</h2>
+        <label class="ch-check"><input type="checkbox" data-overlay="contested" /> Contested fronts</label>
+        <label class="ch-check"><input type="checkbox" data-overlay="lanes" /> Hyperlanes</label>
+        <label class="ch-check"><input type="checkbox" data-overlay="labels" /> Names</label>
+        <label class="ch-check"><input type="checkbox" data-overlay="diplomacy" /> Diplomatic pacts</label>
+        <label class="ch-check"><input type="checkbox" data-overlay="frontiers" /> Highlight frontiers</label>
+        <p class="ch-hint">Click a star to inspect it. Scroll to zoom, drag to pan.</p>
+      </aside>
+    </div>
     <div class="chronicle-selection" id="ch-selection" hidden></div>
     </div>
   `;

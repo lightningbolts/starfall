@@ -584,7 +584,8 @@ export class MacroMapView {
       new MeshBasicMaterial({
         vertexColors: true,
         transparent: true,
-        blending: AdditiveBlending,
+        opacity: 0.72,
+        blending: NormalBlending,
         depthTest: false,
         depthWrite: false,
         side: DoubleSide,
@@ -741,7 +742,7 @@ export class MacroMapView {
       if (pulse > 0) {
         const flashHex = this.pulseColors.get(draw.id) ?? COMBAT_FLASH;
         const flash = hexToRgb(flashHex);
-        const k = pulse * 0.55;
+        const k = pulse * 0.28;
         r += (flash.r - r) * k;
         g += (flash.g - g) * k;
         b += (flash.b - b) * k;
@@ -910,10 +911,9 @@ export class MacroMapView {
     const positions: number[] = [];
     const colors: number[] = [];
     const danger = hexToRgb(DANGER);
-    const pulse = 0.75 + 0.25 * Math.sin(performance.now() * 0.006);
     const seen = new Set<string>();
     // Scale to the gap between stars, not to the galaxy, or fronts become slabs.
-    const baseWidth = this.meanSpacing * 0.035;
+    const baseWidth = this.meanSpacing * 0.028;
 
     for (const id of view.systemOrder) {
       const sys = view.systems[id]!;
@@ -938,7 +938,8 @@ export class MacroMapView {
         const dy = edge.p1.y - edge.p0.y;
         const len = Math.hypot(dx, dy) || 1;
         const intensity = sys.engagement?.intensity ?? front.pct;
-        const widthScale = 0.6 + front.pct * 1.9 + intensity * 2.4;
+        // Contested fronts stay thin and warm — not blown-out white slabs.
+        const widthScale = 0.4 + front.pct * 0.75 + intensity * 0.35;
         const nx = (-dy / len) * baseWidth * widthScale;
         const ny = (dx / len) * baseWidth * widthScale;
 
@@ -950,9 +951,14 @@ export class MacroMapView {
           edge.p1.x - nx, edge.p1.y - ny, 0.6,
           edge.p0.x - nx, edge.p0.y - ny, 0.6,
         );
-        const heat = (0.35 + front.pct * 0.9 + intensity * 0.55) * pulse;
+        const heat = 0.22 + front.pct * 0.28 + intensity * 0.18;
+        const flicker = 0.92 + 0.08 * Math.sin(performance.now() * 0.004);
         for (let v = 0; v < 6; v++) {
-          colors.push(danger.r * heat, danger.g * heat * 0.8, danger.b * heat * 0.7);
+          colors.push(
+            danger.r * heat * flicker,
+            danger.g * heat * 0.75 * flicker,
+            danger.b * heat * 0.55 * flicker,
+          );
         }
       }
     }

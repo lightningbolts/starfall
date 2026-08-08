@@ -59,6 +59,7 @@ export type {
 export {
   beginEngagement,
   colonizeCost,
+  abandonSystem,
   pressureBorder,
   reinforceSystem,
   resolveContestedFronts,

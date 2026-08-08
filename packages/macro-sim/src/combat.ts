@@ -51,18 +51,18 @@ export function setSystemOwner(
 }
 
 /**
- * Credits needed to colonize one more star. Superlinear in territory, so
- * empires sprawl fast early and then stall until they take someone else's
- * space.
+ * Credits needed to colonize one more star. Grows with territory so sprawl
+ * decelerates, but stays affordable on the early/mid frontier.
  */
 export function colonizeCost(empire: Empire): number {
   const owned = empire.ownedSystems.size;
-  return (8 + 1.7 * Math.pow(owned, 1.42)) * colonizeCostMult(empire);
+  // Soft curve: ~7 at 1 system, ~20 at 10, ~45 at 25, ~90 at 50.
+  return (6 + 1.05 * Math.pow(owned, 1.18)) * colonizeCostMult(empire);
 }
 
 /**
- * Fund a claim from the treasuries of adjacent owned systems. Returns false
- * when the frontier cannot pay, which is what paces expansion.
+ * Fund a claim — prefer adjacent treasuries, then pull from the wider empire
+ * so a rich core can still seed the frontier.
  */
 export function tryColonize(
   state: MacroState,
@@ -72,22 +72,48 @@ export function tryColonize(
   const target = state.systems[systemId];
   if (!target || target.ownerId) return false;
 
-  const funders: StarSystem[] = [];
-  let available = 0;
+  const adjacent: StarSystem[] = [];
+  let adjacentCredits = 0;
   for (const nid of target.hyperlanes) {
     const n = state.systems[nid];
     if (!n || n.ownerId !== empire.id) continue;
-    funders.push(n);
-    available += n.credits;
+    adjacent.push(n);
+    adjacentCredits += n.credits;
   }
-  if (funders.length === 0) return false;
+  if (adjacent.length === 0) return false;
 
   const cost = colonizeCost(empire);
-  if (available < cost) return false;
-
-  for (const funder of funders) {
-    funder.credits -= cost * (funder.credits / available);
+  let pool = adjacentCredits;
+  const extras: StarSystem[] = [];
+  if (pool < cost) {
+    for (const sid of empire.ownedSystems) {
+      const s = state.systems[sid]!;
+      if (adjacent.includes(s)) continue;
+      extras.push(s);
+      pool += s.credits;
+    }
   }
+  if (pool < cost) return false;
+
+  let remaining = cost;
+  const payFrom = (systems: StarSystem[], available: number): void => {
+    if (available <= 0 || remaining <= 0) return;
+    const take = Math.min(remaining, available);
+    for (const s of systems) {
+      if (remaining <= 0) break;
+      const share = available > 0 ? (s.credits / available) * take : 0;
+      const paid = Math.min(s.credits, share);
+      s.credits -= paid;
+      remaining -= paid;
+    }
+  };
+
+  payFrom(adjacent, adjacentCredits);
+  if (remaining > 0.01) {
+    const extraAvail = extras.reduce((sum, s) => sum + s.credits, 0);
+    payFrom(extras, extraAvail);
+  }
+  if (remaining > 0.5) return false;
 
   setSystemOwner(state, target, empire.id);
   target.contested = null;
@@ -98,7 +124,7 @@ export function tryColonize(
   target.developments = new Set();
   syncDefenseMix(target);
 
-  for (const funder of funders) {
+  for (const funder of adjacent) {
     if (funder.garrison <= 18) continue;
     const spend = Math.min(funder.garrison * 0.12, 14);
     funder.garrison -= spend;
@@ -457,6 +483,77 @@ function flipSystem(
   system.credits *= 0.45;
   stripDevelopmentsOnFlip(system);
   syncDefenseMix(system);
+}
+
+/**
+ * Relinquish a system to wilderness — used for rebellions, disasters, and
+ * deliberate withdrawals when an empire overextends.
+ */
+export function abandonSystem(
+  state: MacroState,
+  system: StarSystem,
+  reason: "rebellion" | "disaster" | "withdraw" = "withdraw",
+): MacroEvent[] {
+  const from = system.ownerId;
+  if (!from) return [];
+  const empire = state.empires[from];
+  if (!empire) return [];
+
+  const wasCapital = empire.capitalSystemId === system.id;
+  setSystemOwner(state, system, null);
+  system.contested = null;
+  system.engagement = null;
+  system.population = Math.max(6, system.population * 0.35);
+  system.credits = Math.max(0, system.credits * 0.15);
+  system.garrison = Math.max(2, system.garrison * 0.2);
+  system.developments = new Set();
+  syncDefenseMix(system);
+
+  const verb =
+    reason === "rebellion"
+      ? "falls into anarchy"
+      : reason === "disaster"
+        ? "is left desolate"
+        : "is abandoned";
+  const events: MacroEvent[] = [
+    emit(state, {
+      tick: state.tick,
+      kind: "territory_abandoned",
+      empireIds: [from],
+      systemId: system.id,
+      text: `${system.name} ${verb}; ${empire.name} withdraws and the system turns neutral.`,
+    }),
+  ];
+
+  if (empire.ownedSystems.size === 0) {
+    empire.alive = false;
+    empire.allies = [];
+    empire.fleet = emptyFleet();
+    for (const other of Object.values(state.empires)) {
+      other.allies = other.allies.filter((a) => a !== from);
+    }
+    events.push(
+      emit(state, {
+        tick: state.tick,
+        kind: "empire_eliminated",
+        empireIds: [from],
+        systemId: null,
+        text: `${empire.name} has been eliminated.`,
+      }),
+    );
+  } else if (wasCapital) {
+    let best: SystemId | null = null;
+    let bestG = -1;
+    for (const id of empire.ownedSystems) {
+      const g = state.systems[id]!.garrison;
+      if (g > bestG) {
+        bestG = g;
+        best = id;
+      }
+    }
+    if (best) empire.capitalSystemId = best;
+  }
+  return events;
 }
 
 function rehomeOrEliminate(

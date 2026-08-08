@@ -195,6 +195,7 @@ export function startChronicle(
             ev.kind === "defensive_stronghold" ||
             ev.kind === "plague" ||
             ev.kind === "rebellion" ||
+            ev.kind === "territory_abandoned" ||
             ev.kind === "pirate_raid" ||
             ev.kind === "robbery" ||
             ev.kind === "tech_breakthrough" ||
