@@ -27,14 +27,13 @@ export interface ServerOptions extends MatchRoomOptions {
 export function startServer(opts: ServerOptions = {}): {
   port: number;
   room: MatchRoom;
+  staticDir: string | undefined;
   close: () => void;
   ready: Promise<number>;
 } {
-  const port = opts.port ?? 8787;
+  const port = opts.port ?? (Number(process.env.PORT) || 8787);
   const room = new MatchRoom(opts);
-  const staticDir = opts.staticDir
-    ? resolve(opts.staticDir)
-    : resolveStaticDefault();
+  const staticDir = resolveStaticDir(opts.staticDir);
 
   const httpServer = createHttpServer((req, res) => {
     const urlPath = decodeURIComponent((req.url ?? "/").split("?")[0] ?? "/");
@@ -168,12 +167,13 @@ export function startServer(opts: ServerOptions = {}): {
   });
 
   let boundPort = port;
-  const ready = new Promise<number>((resolve, reject) => {
+  const ready = new Promise<number>((resolveReady, reject) => {
     httpServer.once("error", reject);
-    httpServer.listen(port, () => {
+    // Bind all interfaces for cloud hosts (Render, Fly, etc.).
+    httpServer.listen(port, "0.0.0.0", () => {
       const addr = httpServer.address();
       boundPort = addr && typeof addr === "object" ? addr.port : port;
-      resolve(boundPort);
+      resolveReady(boundPort);
     });
   });
 
@@ -182,6 +182,7 @@ export function startServer(opts: ServerOptions = {}): {
       return boundPort;
     },
     room,
+    staticDir,
     ready,
     close: () => {
       room.stop();
@@ -191,13 +192,25 @@ export function startServer(opts: ServerOptions = {}): {
   };
 }
 
-function resolveStaticDefault(): string | undefined {
+/** Prefer a directory that actually contains index.html (cwd varies under pnpm). */
+function resolveStaticDir(requested?: string): string | undefined {
+  const candidates: string[] = [];
+  if (requested) {
+    candidates.push(resolve(requested));
+    // `pnpm --filter @starfall/server exec` runs with cwd packages/server
+    candidates.push(resolve(process.cwd(), "../../", requested));
+  }
   try {
     const here = fileURLToPath(new URL(".", import.meta.url));
-    const candidate = resolve(here, "../../../apps/web/dist");
-    if (existsSync(candidate)) return candidate;
+    candidates.push(resolve(here, "../../../apps/web/dist"));
   } catch {
     /* ignore */
   }
-  return undefined;
+  candidates.push(resolve(process.cwd(), "apps/web/dist"));
+  candidates.push(resolve(process.cwd(), "../../apps/web/dist"));
+
+  for (const candidate of candidates) {
+    if (existsSync(join(candidate, "index.html"))) return candidate;
+  }
+  return requested ? resolve(requested) : undefined;
 }

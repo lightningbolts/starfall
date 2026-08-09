@@ -7,7 +7,7 @@ function arg(name: string): string | undefined {
   return undefined;
 }
 
-const port = Number(arg("port") ?? 8787);
+const port = Number(arg("port") ?? process.env.PORT ?? 8787);
 const seed = arg("seed") ? Number(arg("seed")) : undefined;
 /** 0 or omit = last player standing (no time limit). */
 const ticksRaw = arg("ticks");
@@ -36,9 +36,14 @@ const srv = startServer({
 });
 
 const bound = await srv.ready;
-console.log(`Starfall server listening on http://localhost:${bound}`);
-console.log(`WebSocket: ws://localhost:${bound}/ws`);
-console.log(`Metrics: http://localhost:${bound}/metrics`);
+console.log(`Starfall server listening on http://0.0.0.0:${bound}`);
+console.log(`WebSocket: ws://0.0.0.0:${bound}/ws`);
+console.log(`Metrics: http://0.0.0.0:${bound}/metrics`);
+console.log(
+  srv.staticDir
+    ? `Static: ${srv.staticDir}`
+    : "Static: (none — UI will 404 until apps/web/dist is built)",
+);
 console.log(`Capacity: ${srv.room.capacity}`);
 if (bots > 0) console.log(`Bots: ${srv.room.botCount}`);
 if (difficulty) console.log(`Bot difficulty: ${difficulty}`);
