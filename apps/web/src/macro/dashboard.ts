@@ -3,8 +3,13 @@ import {
   effectiveCombatPower,
   formatComposition,
   MACRO_SHIP_TYPES,
+  MACRO_TECH_IDS,
   militaryTechScore,
   PLANETARY_LABEL,
+  REPEATABLE_BLURB,
+  REPEATABLE_LABEL,
+  REPEATABLE_TECH_IDS,
+  TECH_BLURB,
   TECH_LABEL,
   TECH_TIER,
   type EmpireId,
@@ -12,6 +17,7 @@ import {
   type InterpolatedSnapshot,
   type MacroEvent,
   type MacroShipType,
+  type MacroTechId,
   type PlanetaryDevId,
   type SystemId,
 } from "@starfall/macro-sim";
@@ -75,9 +81,10 @@ export interface DashboardState {
     military: boolean;
     battles: boolean;
     empire: boolean;
+    tech: boolean;
   };
   paused: boolean;
-  speed: 1 | 2 | 4 | 10;
+  speed: 1 | 2 | 4 | 10 | 20;
 }
 
 export interface TrendHistory {
@@ -118,6 +125,7 @@ export function createDashboardState(): DashboardState {
       military: false,
       battles: false,
       empire: false,
+      tech: false,
     },
     paused: false,
     speed: 1,
@@ -186,6 +194,7 @@ export class MacroDashboard {
   private lastEmpireSig = "";
   private lastTrendsSig = "";
   private lastSelectionSig = "";
+  private lastTechSig = "";
   private lastView: InterpolatedSnapshot | null = null;
 
   constructor(
@@ -252,6 +261,7 @@ export class MacroDashboard {
       this.renderMilitary(view);
       this.renderBattles(view);
       this.renderEmpireDetail(view);
+      this.renderTechCatalog(view);
       this.renderFocusLabel(view);
       this.renderSelection(view);
     } else if (!allowHeavy) {
@@ -333,7 +343,7 @@ export class MacroDashboard {
         btn.addEventListener("pointerdown", (e) => {
           if (e.button !== 0) return;
           e.preventDefault();
-          this.state.speed = Number(btn.dataset.speed) as 1 | 2 | 4 | 10;
+          this.state.speed = Number(btn.dataset.speed) as 1 | 2 | 4 | 10 | 20;
           this.state.paused = false;
           this.changed();
         });
@@ -677,15 +687,34 @@ export class MacroDashboard {
     const id = this.state.selectedSystemId;
     if (!id) {
       card.hidden = true;
+      this.lastSelectionSig = "";
       return;
     }
     const system = view.systems[id];
     const geo = view.geometry.byId[id];
     if (!system || !geo) {
       card.hidden = true;
+      this.lastSelectionSig = "";
       return;
     }
     card.hidden = false;
+
+    // Keep the × button mounted — only rebuild chrome when the selected system changes.
+    if (card.dataset.selId !== id || !card.querySelector("#ch-clear-selection")) {
+      card.dataset.selId = id;
+      card.innerHTML = `
+        <div class="ch-sel-head">
+          <strong data-sel-name></strong>
+          <button type="button" class="btn btn-compact" id="ch-clear-selection">×</button>
+        </div>
+        <div class="ch-sel-body"></div>
+      `;
+      this.lastSelectionSig = "";
+    }
+
+    const nameEl = card.querySelector<HTMLElement>("[data-sel-name]");
+    if (nameEl) setText(nameEl, geo.name);
+
     const owner = system.ownerId ? view.empires[system.ownerId] : null;
     const ownerLine = owner
       ? `<span class="ch-swatch" style="background:${empireCss(owner)}"></span>${escapeHtml(owner.name)}`
@@ -704,11 +733,7 @@ export class MacroDashboard {
             .map((d) => escapeHtml(PLANETARY_LABEL[d] ?? d))
             .join(" · ")}</div>`
         : "";
-    card.innerHTML = `
-      <div class="ch-sel-head">
-        <strong>${escapeHtml(geo.name)}</strong>
-        <button type="button" class="btn btn-compact" id="ch-clear-selection">×</button>
-      </div>
+    const bodyHtml = `
       <div class="ch-sel-owner">${ownerLine}</div>
       <div class="ch-sel-stats">
         <span>Pop <b>${fmt(system.population)}</b></span>
@@ -720,6 +745,95 @@ export class MacroDashboard {
       ${devs}
       ${front}
       ${eng}
+    `;
+    const sig = `${id}|${bodyHtml}`;
+    if (sig === this.lastSelectionSig) return;
+    this.lastSelectionSig = sig;
+    const body = card.querySelector(".ch-sel-body");
+    if (body) body.innerHTML = bodyHtml;
+  }
+
+  private renderTechCatalog(view: InterpolatedSnapshot): void {
+    const host = this.root.querySelector<HTMLElement>("#ch-tech");
+    if (!host) return;
+
+    const focusId = this.state.focusEmpireId;
+    const empire = focusId ? view.empires[focusId] : null;
+    const researched = new Set<MacroTechId>(empire?.researched ?? []);
+    const repeatLevels = empire?.repeatableLevels ?? {};
+
+    const ownershipSig = empire
+      ? `${empire.name}|${[...researched].sort().join(",")}|${REPEATABLE_TECH_IDS.map((t) => `${t}:${repeatLevels[t] ?? 0}`).join(",")}`
+      : "catalog";
+    if (ownershipSig === this.lastTechSig && host.childElementCount > 0) return;
+    this.lastTechSig = ownershipSig;
+
+    const byTier = new Map<number, MacroTechId[]>();
+    for (const t of MACRO_TECH_IDS) {
+      const tier = TECH_TIER[t];
+      let list = byTier.get(tier);
+      if (!list) {
+        list = [];
+        byTier.set(tier, list);
+      }
+      list.push(t);
+    }
+
+    const focusLine = empire
+      ? `<p class="ch-hint">Showing ownership for <b>${escapeHtml(empire.name)}</b>.</p>`
+      : `<p class="ch-hint">Full tech catalog. Focus an empire to mark researched / available / locked.</p>`;
+
+    const tiersHtml = [...byTier.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([tier, techs]) => {
+        const rows = techs
+          .map((t) => {
+            let status = "catalog";
+            let statusLabel = "";
+            if (empire) {
+              if (researched.has(t)) {
+                status = "owned";
+                statusLabel = "Researched";
+              } else if (techAvailable(researched, t)) {
+                status = "available";
+                statusLabel = "Available";
+              } else {
+                status = "locked";
+                statusLabel = "Locked";
+              }
+            }
+            return `<div class="ch-tech-row is-${status}">
+              <span class="ch-chip ch-chip-tier-${tier}">T${tier}</span>
+              <div class="ch-tech-meta">
+                <div class="ch-tech-name">${escapeHtml(TECH_LABEL[t])}${statusLabel ? ` · <span class="ch-muted">${statusLabel}</span>` : ""}</div>
+                <div class="ch-muted">${escapeHtml(TECH_BLURB[t])}</div>
+              </div>
+            </div>`;
+          })
+          .join("");
+        return `<h3 class="ch-emp-section">Tier ${tier}</h3><div class="ch-tech-list">${rows}</div>`;
+      })
+      .join("");
+
+    const repeatHtml = REPEATABLE_TECH_IDS.map((t) => {
+      const level = repeatLevels[t] ?? 0;
+      const levelLine = empire
+        ? ` · Level <b>${level}</b>`
+        : " · Open-ended";
+      return `<div class="ch-tech-row is-repeatable">
+        <span class="ch-chip ch-chip-tier-5">∞</span>
+        <div class="ch-tech-meta">
+          <div class="ch-tech-name">${escapeHtml(REPEATABLE_LABEL[t])}${levelLine}</div>
+          <div class="ch-muted">${escapeHtml(REPEATABLE_BLURB[t])}</div>
+        </div>
+      </div>`;
+    }).join("");
+
+    host.innerHTML = `
+      ${focusLine}
+      ${tiersHtml}
+      <h3 class="ch-emp-section">Repeatable tracks</h3>
+      <div class="ch-tech-list">${repeatHtml}</div>
     `;
   }
 
@@ -853,12 +967,14 @@ export class MacroDashboard {
   }
 
   private renderEmpireDetail(view: InterpolatedSnapshot): void {
-    const host = this.root.querySelector("#ch-empire-detail");
+    const host = this.root.querySelector<HTMLElement>("#ch-empire-detail");
     if (!host) return;
 
     const id = this.state.focusEmpireId;
     if (!id || !view.empires[id]) {
       host.innerHTML = `<p class="ch-hint">Click an empire on the roster, military table, or map to inspect it.</p>`;
+      this.lastEmpireSig = "";
+      delete host.dataset.empId;
       return;
     }
 
@@ -936,15 +1052,7 @@ export class MacroDashboard {
       "loyalty",
     ];
 
-    host.innerHTML = `
-      <div class="ch-emp-head">
-        <span class="ch-swatch ch-swatch-lg" style="background:${color}"></span>
-        <div>
-          <div class="ch-emp-name" style="color:${color}">${escapeHtml(e.name)}</div>
-          <div class="ch-muted">${escapeHtml(archetypeLabel(e.archetype))}${e.alive ? "" : " · eliminated"}</div>
-        </div>
-        <button type="button" class="btn btn-compact" id="ch-close-empire" title="Close">×</button>
-      </div>
+    const bodyHtml = `
       <div class="ch-emp-stats">
         <span>Sys <b>${Math.round(e.territory)}</b></span>
         <span>Pop <b>${fmt(e.population)}</b></span>
@@ -1009,6 +1117,42 @@ export class MacroDashboard {
       }</div>
     `;
 
+    const sig = `${id}|${bodyHtml}`;
+    if (host.dataset.empId !== id || !host.querySelector("#ch-close-empire")) {
+      host.dataset.empId = id;
+      host.innerHTML = `
+        <div class="ch-emp-head">
+          <span class="ch-swatch ch-swatch-lg" data-emp-swatch style="background:${color}"></span>
+          <div>
+            <div class="ch-emp-name" data-emp-name style="color:${color}">${escapeHtml(e.name)}</div>
+            <div class="ch-muted" data-emp-arch>${escapeHtml(archetypeLabel(e.archetype))}${e.alive ? "" : " · eliminated"}</div>
+          </div>
+          <button type="button" class="btn btn-compact" id="ch-close-empire" title="Close">×</button>
+        </div>
+        <div class="ch-emp-body"></div>
+      `;
+      this.lastEmpireSig = "";
+    } else {
+      const swatch = host.querySelector<HTMLElement>("[data-emp-swatch]");
+      if (swatch) swatch.style.background = color;
+      const nameEl = host.querySelector<HTMLElement>("[data-emp-name]");
+      if (nameEl) {
+        setText(nameEl, e.name);
+        nameEl.style.color = color;
+      }
+      const archEl = host.querySelector<HTMLElement>("[data-emp-arch]");
+      if (archEl) {
+        setText(
+          archEl,
+          `${archetypeLabel(e.archetype)}${e.alive ? "" : " · eliminated"}`,
+        );
+      }
+    }
+
+    if (sig === this.lastEmpireSig) return;
+    this.lastEmpireSig = sig;
+    const body = host.querySelector(".ch-emp-body");
+    if (body) body.innerHTML = bodyHtml;
   }
 
   private handleEliminationAlerts(
@@ -1057,6 +1201,19 @@ export class MacroDashboard {
 
 function setText(el: HTMLElement, text: string): void {
   if (el.textContent !== text) el.textContent = text;
+}
+
+function techAvailable(
+  researched: ReadonlySet<MacroTechId>,
+  tech: MacroTechId,
+): boolean {
+  if (researched.has(tech)) return false;
+  const tier = TECH_TIER[tech];
+  if (tier === 1) return true;
+  for (const id of researched) {
+    if (TECH_TIER[id] === tier - 1) return true;
+  }
+  return false;
 }
 
 function sparkRow(
@@ -1162,7 +1319,7 @@ function activeModifiers(m: {
   return out;
 }
 
-const EXCLUSIVE_PANELS = ["empire", "trends", "military", "battles"] as const;
+const EXCLUSIVE_PANELS = ["empire", "trends", "military", "battles", "tech"] as const;
 type ExclusivePanel = (typeof EXCLUSIVE_PANELS)[number];
 
 function isExclusivePanel(
@@ -1186,6 +1343,7 @@ function shellHtml(): string {
         <button type="button" class="btn" data-speed="2">2×</button>
         <button type="button" class="btn" data-speed="4">4×</button>
         <button type="button" class="btn" data-speed="10">10×</button>
+        <button type="button" class="btn" data-speed="20">20×</button>
         <button type="button" class="btn" id="ch-fit" title="Fit galaxy (F)">Fit</button>
         <button type="button" class="btn" id="ch-restart" title="New galaxy">New</button>
         <button type="button" class="btn" id="ch-exit">Exit</button>
@@ -1202,6 +1360,7 @@ function shellHtml(): string {
       <button type="button" class="rail-tab" data-panel-toggle="trends">Trends</button>
       <button type="button" class="rail-tab" data-panel-toggle="empire">Empire</button>
       <button type="button" class="rail-tab" data-panel-toggle="military">Military</button>
+      <button type="button" class="rail-tab" data-panel-toggle="tech">Tech</button>
       <button type="button" class="rail-tab" data-panel-toggle="battles">Battles <span id="ch-battles-badge" class="ch-rail-badge" hidden></span></button>
       <button type="button" class="rail-tab" data-panel-toggle="overlays">Overlays</button>
     </nav>
@@ -1251,6 +1410,10 @@ function shellHtml(): string {
       <aside class="chronicle-panel chronicle-dock-panel" data-panel="military" hidden>
         <h2>Military</h2>
         <div id="ch-military"></div>
+      </aside>
+      <aside class="chronicle-panel chronicle-dock-panel" data-panel="tech" hidden>
+        <h2>Technology</h2>
+        <div id="ch-tech" class="ch-tech"></div>
       </aside>
       <aside class="chronicle-panel chronicle-dock-panel" data-panel="battles" hidden>
         <h2>Active engagements</h2>

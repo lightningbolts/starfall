@@ -475,6 +475,8 @@ describe("createMacroMatch", () => {
     const { setSystemOwner, abandonSystem } = await import("./combat.js");
     setSystemOwner(state, neighbor, empire.id);
     neighbor.garrison = 12;
+    neighbor.developments.add("agro_domes");
+    neighbor.developments.add("mining_spires");
     expect(empire.ownedSystems.has(neighborId)).toBe(true);
 
     const events = abandonSystem(state, neighbor, "withdraw");
@@ -482,6 +484,112 @@ describe("createMacroMatch", () => {
     expect(neighbor.ownerId).toBeNull();
     expect(empire.ownedSystems.has(neighborId)).toBe(false);
     expect(empire.alive).toBe(true);
+    expect(neighbor.developments.has("agro_domes")).toBe(true);
+    expect(neighbor.developments.has("mining_spires")).toBe(true);
+  });
+
+  it("preserves civilian developments on recolonize and strips military on flip", async () => {
+    const { state } = createMacroMatch({
+      seed: 21,
+      systemCount: 80,
+      empireCount: 4,
+    });
+    const empire = state.empires[state.empireOrder[0]!]!;
+    const home = state.systems[empire.capitalSystemId]!;
+    const targetId = home.hyperlanes[0]!;
+    const target = state.systems[targetId]!;
+    target.developments.add("agro_domes");
+    target.developments.add("orbital_batteries");
+    home.credits = 500;
+    expect(tryColonize(state, empire, targetId)).toBe(true);
+    expect(target.developments.has("agro_domes")).toBe(true);
+    expect(target.developments.has("orbital_batteries")).toBe(true);
+
+    const { stripDevelopmentsOnFlip } = await import("./tech.js");
+    stripDevelopmentsOnFlip(target);
+    expect(target.developments.has("agro_domes")).toBe(true);
+    expect(target.developments.has("orbital_batteries")).toBe(false);
+  });
+
+  it("marks capital-disconnected systems as enclaves and collapses them", async () => {
+    const { state } = createMacroMatch({
+      seed: 22,
+      systemCount: 100,
+      empireCount: 4,
+    });
+    const empire = state.empires[state.empireOrder[0]!]!;
+    const { setSystemOwner, systemsConnectedToCapital, processEnclaves, isEnclave } =
+      await import("./combat.js");
+    const { ENCLAVE_GRACE_PULSES } = await import("./types.js");
+
+    // Find a system not adjacent to capital and force-own it (artificial enclave).
+    const capital = empire.capitalSystemId;
+    const far = state.systemOrder.find((id) => {
+      if (id === capital) return false;
+      const s = state.systems[id]!;
+      return !s.ownerId && !s.hyperlanes.includes(capital);
+    });
+    expect(far).toBeTruthy();
+    setSystemOwner(state, state.systems[far!]!, empire.id);
+    expect(isEnclave(state, empire, far!)).toBe(true);
+    expect(systemsConnectedToCapital(state, empire).has(far!)).toBe(false);
+
+    for (let i = 0; i < ENCLAVE_GRACE_PULSES; i++) {
+      processEnclaves(state);
+    }
+    expect(state.systems[far!]!.ownerId).toBeNull();
+  });
+
+  it("requires higher force ratio to flip fortress worlds", async () => {
+    const { state } = createMacroMatch({
+      seed: 23,
+      systemCount: 80,
+      empireCount: 4,
+    });
+    const empire = state.empires[state.empireOrder[0]!]!;
+    const home = state.systems[empire.capitalSystemId]!;
+    const { captureFlipRatio, captureMinPushRatio } = await import("./combat.js");
+    expect(captureMinPushRatio(home, empire)).toBeGreaterThan(1.2);
+    home.developments.add("fortress_complex");
+    home.developments.add("orbital_batteries");
+    expect(captureFlipRatio(home, empire)).toBeGreaterThan(2.0);
+  });
+
+  it("applies a lasting shock when the capital falls but leaves a comeback path", async () => {
+    const { state } = createMacroMatch({
+      seed: 24,
+      systemCount: 80,
+      empireCount: 4,
+    });
+    const empire = state.empires[state.empireOrder[0]!]!;
+    const home = state.systems[empire.capitalSystemId]!;
+    const neighborId = home.hyperlanes[0]!;
+    const neighbor = state.systems[neighborId]!;
+    const { setSystemOwner, applyCapitalFallout } = await import("./combat.js");
+    setSystemOwner(state, neighbor, empire.id);
+    neighbor.garrison = 80;
+    empire.fleet = { corvette: 400, cruiser: 100, dreadnought: 10 };
+    empire.allies = [state.empireOrder[1]!];
+    state.empires[state.empireOrder[1]!]!.allies = [empire.id];
+    const fleetBefore = 400 + 100 + 10;
+    const creditsBefore = neighbor.credits;
+
+    // Simulate rehome: move capital, then apply fallout.
+    empire.capitalSystemId = neighborId;
+    applyCapitalFallout(state, empire);
+
+    expect(empire.modifiers.productionMult).toBeLessThan(0.7);
+    expect(empire.modifiers.productionTicksLeft).toBeGreaterThanOrEqual(90);
+    expect(empire.modifiers.garrisonMult).toBeLessThan(0.8);
+    const fleetAfter =
+      (empire.fleet.corvette ?? 0) +
+      (empire.fleet.cruiser ?? 0) +
+      (empire.fleet.dreadnought ?? 0);
+    expect(fleetAfter).toBeGreaterThan(fleetBefore * 0.5);
+    expect(fleetAfter).toBeLessThan(fleetBefore);
+    expect(neighbor.credits).toBeLessThan(creditsBefore);
+    expect(empire.alive).toBe(true);
+    expect(empire.ownedSystems.size).toBeGreaterThan(0);
   });
 
   it("emits match_won separately from empire_eliminated", () => {

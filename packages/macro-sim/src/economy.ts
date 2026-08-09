@@ -4,15 +4,17 @@ import { addShips, fleetUpkeep, SHIP_STATS, syncDefenseMix } from "./ships.js";
 import {
   applyShipyardPulse,
   creditProductionMult,
+  fleetUpkeepMult,
   garrisonGrowthMult,
   popProductionMult,
   shipUnlockOk,
+  sprawlUpkeepMult,
 } from "./tech.js";
 
 /** Per economy pulse (~1s at 100ms logic ticks). */
 const BASE_POP = 2.6;
-const BASE_CREDITS = 2.35;
-const BASE_GARRISON_SHARE = 0.24;
+const BASE_CREDITS = 8.5;
+const BASE_GARRISON_SHARE = 0.28;
 
 export function systemProductionMult(empire: Empire | undefined): number {
   if (!empire) return 1;
@@ -44,7 +46,8 @@ export function applyEconomyTick(
   } else {
     system.population += popGain;
   }
-  const ceiling = 180 + system.developments.size * 40;
+  const terraBonus = empire.researched.has("terraforming_guilds") ? 60 : 0;
+  const ceiling = 180 + system.developments.size * 40 + terraBonus;
   if (system.population > ceiling) {
     system.population -= (system.population - ceiling) * 0.08;
   }
@@ -52,9 +55,9 @@ export function applyEconomyTick(
   system.credits += creditGain;
 
   const sprawl = Math.max(1, empire.ownedSystems.size);
-  // Light upkeep — heavy enough to matter late, not enough to freeze early sprawl.
   const upkeep =
-    0.08 + sprawl * 0.006 + Math.max(0, system.population - 40) * 0.001;
+    (0.08 + sprawl * 0.006 + Math.max(0, system.population - 40) * 0.001) *
+    sprawlUpkeepMult(empire);
   system.credits = Math.max(0, system.credits - upkeep);
 
   const gMult =
@@ -73,7 +76,7 @@ export function applyEmpireEconomyPulse(
   empire: Empire,
 ): void {
   if (!empire.alive) return;
-  const upkeep = fleetUpkeep(empire.fleet);
+  const upkeep = fleetUpkeep(empire.fleet) * fleetUpkeepMult(empire);
   if (upkeep > 0) {
     let left = upkeep;
     for (const sid of empire.ownedSystems) {
@@ -84,10 +87,12 @@ export function applyEmpireEconomyPulse(
       if (left <= 0) break;
     }
     if (left > 0) {
+      // Scrap a batch when treasury cannot cover upkeep at the new fleet scale.
       for (const key of Object.keys(empire.fleet) as MacroShipType[]) {
         const n = empire.fleet[key] ?? 0;
         if (n > 0) {
-          empire.fleet[key] = Math.max(0, n - 1);
+          const scrap = Math.min(n, Math.max(1, Math.floor(n * 0.02)));
+          empire.fleet[key] = Math.max(0, n - scrap);
           if ((empire.fleet[key] ?? 0) <= 0) delete empire.fleet[key];
         }
       }
@@ -117,7 +122,7 @@ export function decayEmpireModifiers(empire: Empire): void {
   }
 }
 
-/** Buy a few ships from capital credits into the strategic fleet. */
+/** Buy a batch of ships from capital credits into the strategic fleet. */
 export function tryBuildShips(
   state: MacroState,
   empire: Empire,
@@ -128,7 +133,11 @@ export function tryBuildShips(
 
   const prefs: MacroShipType[] = [];
   if (empire.archetype === "conqueror" || empire.traits.ambition > 0.7) {
-    prefs.push("battleship", "cruiser", "dreadnought", "corvette");
+    if (empire.researched.has("supercapital_frame")) {
+      prefs.push("dreadnought", "battleship", "cruiser", "corvette");
+    } else {
+      prefs.push("battleship", "cruiser", "dreadnought", "corvette");
+    }
   } else if (
     empire.archetype === "reckless" ||
     empire.archetype === "opportunistic"
@@ -136,22 +145,38 @@ export function tryBuildShips(
     prefs.push("raider", "corvette", "destroyer");
   } else if (empire.archetype === "technocrat") {
     prefs.push("carrier", "cruiser", "destroyer");
+    if (empire.researched.has("supercapital_frame")) prefs.push("dreadnought");
   } else if (
     empire.archetype === "xenophobe" ||
     empire.archetype === "isolationist"
   ) {
     prefs.push("destroyer", "corvette");
+    if (empire.researched.has("supercapital_frame")) prefs.push("dreadnought");
   } else {
     prefs.push("corvette", "cruiser", "destroyer");
+    if (
+      empire.researched.has("supercapital_frame") &&
+      empire.traits.ambition > 0.5
+    ) {
+      prefs.unshift("dreadnought");
+    }
   }
 
   for (const type of prefs) {
     if (!shipUnlockOk(empire, type)) continue;
-    const cost = SHIP_STATS[type].creditCost;
+    const batch =
+      type === "dreadnought"
+        ? 2
+        : type === "battleship" || type === "carrier"
+          ? 5
+          : type === "cruiser" || type === "destroyer"
+            ? 15
+            : 40;
+    const cost = SHIP_STATS[type].creditCost * batch;
     if (capital.credits < cost) continue;
     if (rng() > 0.55 + empire.traits.aggression * 0.2) continue;
     capital.credits -= cost;
-    addShips(empire.fleet, type, 1);
+    addShips(empire.fleet, type, batch);
     break;
   }
 }

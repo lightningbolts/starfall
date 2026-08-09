@@ -65,6 +65,7 @@ export function buildSnapshot(state: MacroState): MacroSnapshot {
       credits,
       garrison,
       researched: [...e.researched],
+      repeatableLevels: { ...e.repeatableLevels },
       fleet: { ...e.fleet },
       fleetPower: fleetPower(e.fleet) + deployed,
       modifiers: { ...e.modifiers },

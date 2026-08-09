@@ -5,8 +5,12 @@ import { pick } from "./rng.js";
 import { syncDefenseMix } from "./ships.js";
 import {
   canResearch,
+  canResearchRepeatable,
+  grantRepeatableLevel,
   grantTech,
   MACRO_TECH_IDS,
+  REPEATABLE_LABEL,
+  REPEATABLE_TECH_IDS,
   TECH_LABEL,
   TECH_TIER,
 } from "./tech.js";
@@ -16,12 +20,31 @@ import type {
   MacroEventKind,
   MacroState,
   MacroTechId,
+  RepeatableTechId,
   StarSystem,
 } from "./types.js";
 
 interface WeightedKind {
   kind: MacroEventKind;
   weight: number;
+}
+
+/**
+ * Modifier duration in economy pulses (decayed once per economy pulse ≈ 1s at 1×).
+ * Wide variance so buffs/debuffs feel unpredictable rather than blink-length.
+ */
+function modifierDuration(
+  rng: () => number,
+  band: "short" | "medium" | "long" = "medium",
+): number {
+  switch (band) {
+    case "short":
+      return 45 + Math.floor(rng() * 95); // 45–139
+    case "long":
+      return 100 + Math.floor(rng() * 240); // 100–339
+    default:
+      return 70 + Math.floor(rng() * 170); // 70–239
+  }
 }
 
 const WORLD_EVENTS: WeightedKind[] = [
@@ -103,7 +126,7 @@ function applyWorldEvent(
   switch (kind) {
     case "production_surge": {
       empire.modifiers.productionMult = 1.55 + rng() * 0.35;
-      empire.modifiers.productionTicksLeft = 18 + Math.floor(rng() * 22);
+      empire.modifiers.productionTicksLeft = modifierDuration(rng, "medium");
       return one(
         emit(state, {
           tick,
@@ -150,7 +173,7 @@ function applyWorldEvent(
       system.credits += 80 + rng() * 120;
       system.population += 40;
       empire.modifiers.garrisonMult = 1.35;
-      empire.modifiers.garrisonTicksLeft = 20;
+      empire.modifiers.garrisonTicksLeft = modifierDuration(rng, "medium");
       return one(
         emit(state, {
           tick,
@@ -205,7 +228,7 @@ function applyWorldEvent(
     }
     case "offensive_blitz": {
       empire.modifiers.attackPressure = 1.65 + rng() * 0.4;
-      empire.modifiers.attackPressureTicksLeft = 14 + Math.floor(rng() * 16);
+      empire.modifiers.attackPressureTicksLeft = modifierDuration(rng, "short");
       let borders = 0;
       for (const sid of empire.ownedSystems) {
         if (borders >= 2) break;
@@ -237,7 +260,7 @@ function applyWorldEvent(
       system.garrison *= 1.8;
       system.garrison += 40;
       empire.modifiers.garrisonMult = 1.5;
-      empire.modifiers.garrisonTicksLeft = 18;
+      empire.modifiers.garrisonTicksLeft = modifierDuration(rng, "medium");
       if (!system.developments.has("fortress_complex") && system.developments.size < 4) {
         system.developments.add("orbital_batteries");
       }
@@ -328,10 +351,25 @@ function applyWorldEvent(
           }),
         );
       }
+      if (canResearchRepeatable(empire)) {
+        const track = REPEATABLE_TECH_IDS[
+          Math.floor(rng() * REPEATABLE_TECH_IDS.length)
+        ]! as RepeatableTechId;
+        const level = grantRepeatableLevel(empire, track);
+        return one(
+          emit(state, {
+            tick,
+            kind,
+            empireIds: [empire.id],
+            systemId: system.id,
+            text: `${empire.name} breakthrough advances ${REPEATABLE_LABEL[track]} to level ${level}!`,
+          }),
+        );
+      }
       empire.modifiers.productionMult = 1.55;
-      empire.modifiers.productionTicksLeft = 22;
+      empire.modifiers.productionTicksLeft = modifierDuration(rng, "long");
       empire.modifiers.garrisonMult = 1.4;
-      empire.modifiers.garrisonTicksLeft = 22;
+      empire.modifiers.garrisonTicksLeft = modifierDuration(rng, "medium");
       return one(
         emit(state, {
           tick,
@@ -360,7 +398,7 @@ function applyWorldEvent(
         }
       }
       empire.modifiers.productionMult = 0.45;
-      empire.modifiers.productionTicksLeft = 16;
+      empire.modifiers.productionTicksLeft = modifierDuration(rng, "long");
       const capital = state.systems[empire.capitalSystemId]!;
       capital.garrison *= 0.7;
       capital.population *= 0.85;

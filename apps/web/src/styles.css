@@ -1493,7 +1493,8 @@ body.chronicle-active > #app {
 .chronicle-panel[data-panel="military"] #ch-military,
 .chronicle-panel[data-panel="trends"] #ch-trends,
 .chronicle-panel[data-panel="empire"] #ch-empire-detail,
-.chronicle-panel[data-panel="battles"] #ch-battles {
+.chronicle-panel[data-panel="battles"] #ch-battles,
+.chronicle-panel[data-panel="tech"] #ch-tech {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
@@ -2227,6 +2228,46 @@ body.chronicle-active > #app {
 }
 .ch-chip-tier-4 {
   border-color: color-mix(in srgb, #c06b5a 55%, var(--sf-hud-border));
+}
+.ch-chip-tier-5 {
+  border-color: color-mix(in srgb, #9a7ab8 55%, var(--sf-hud-border));
+}
+
+.ch-tech-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-bottom: 0.75rem;
+}
+
+.ch-tech-row {
+  display: flex;
+  gap: 0.55rem;
+  align-items: flex-start;
+  padding: 0.35rem 0.2rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--sf-lane) 35%, transparent);
+}
+
+.ch-tech-row.is-owned .ch-tech-name {
+  color: var(--sf-self);
+}
+
+.ch-tech-row.is-locked {
+  opacity: 0.55;
+}
+
+.ch-tech-row.is-available .ch-tech-name {
+  color: color-mix(in srgb, var(--sf-self) 70%, white);
+}
+
+.ch-tech-meta {
+  min-width: 0;
+  flex: 1;
+}
+
+.ch-tech-name {
+  font-size: 0.85rem;
+  line-height: 1.25;
 }
 
 .ch-emp-fleet-mix {

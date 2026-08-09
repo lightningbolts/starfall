@@ -155,6 +155,11 @@ export function startChronicle(
         st.speed = 10;
         st.paused = false;
         break;
+      case "6":
+      case "8":
+        st.speed = 20;
+        st.paused = false;
+        break;
       case "f":
       case "F":
         map.fit();

@@ -122,17 +122,37 @@ export type MacroTechId =
   | "diplomatic_corps"
   | "deep_scanners"
   | "escort_doctrine"
+  | "medical_corps"
+  | "logistics_network"
   | "war_mobilization"
   | "planetary_shields"
   | "capital_shipyards"
   | "xenology_bureau"
   | "singularity_labs"
   | "tactical_ai"
+  | "fleet_logistics"
+  | "terraforming_guilds"
+  | "espionage_bureau"
+  | "warp_doctrine"
   | "galactic_hegemony"
   | "eternal_archives"
   | "iron_curtain"
   | "pax_federation"
-  | "supercapital_frame";
+  | "supercapital_frame"
+  | "advanced_shields"
+  | "sensor_grid"
+  | "medical_nanites"
+  | "stellar_engineering"
+  | "quantum_command"
+  | "living_metal"
+  | "void_navigation"
+  | "genesis_protocols";
+
+/** Infinite late-game tracks — levels stack forever after the named tree. */
+export type RepeatableTechId =
+  | "applied_sciences"
+  | "fleet_doctrine_ex"
+  | "industrial_excellence";
 
 export type PlanetaryDevId =
   | "agro_domes"
@@ -179,6 +199,8 @@ export interface Empire {
   /** Temporary modifiers from events (decay each logic tick). */
   modifiers: EmpireModifiers;
   researched: Set<MacroTechId>;
+  /** Stacking levels for open-ended late-game research tracks. */
+  repeatableLevels: Partial<Record<RepeatableTechId, number>>;
   fleet: MacroFleetComposition;
 }
 
@@ -239,6 +261,11 @@ export interface MacroState {
   status: MacroStatus;
   systemOrder: SystemId[];
   empireOrder: EmpireId[];
+  /**
+   * Economy pulses a owned system has been disconnected from its capital.
+   * Cleared when reconnected; used to collapse wartime enclaves.
+   */
+  enclavePulses: Record<SystemId, number>;
 }
 
 /** Dynamic per-system fields; geometry lives on the shared `geometry`. */
@@ -268,6 +295,7 @@ export interface SnapshotEmpire {
   credits: number;
   garrison: number;
   researched: MacroTechId[];
+  repeatableLevels: Partial<Record<RepeatableTechId, number>>;
   fleet: MacroFleetComposition;
   fleetPower: number;
   modifiers: EmpireModifiers;
@@ -328,12 +356,15 @@ export const DEFAULT_MACRO_CONFIG: MacroConfig = {
   systemCount: SYSTEM_COUNTS.medium,
   empireCount: empireCountForSystems(SYSTEM_COUNTS.medium),
   eventChancePerTick: 0.045,
-  contestedFlipThreshold: 0.72,
-  contestedDriftScale: 0.01,
+  contestedFlipThreshold: 0.78,
+  contestedDriftScale: 0.008,
   economyPulseTicks: 10,
   botCadenceTicks: 5,
   diplomacyCadenceTicks: 60,
   maxClaimsPerPulse: 2,
 };
+
+/** Economy pulses of capital-disconnect before an enclave is abandoned. */
+export const ENCLAVE_GRACE_PULSES = 3;
 
 export const MAX_PLANETARY_DEVS = 4;

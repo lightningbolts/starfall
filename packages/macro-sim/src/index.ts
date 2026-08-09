@@ -21,6 +21,7 @@ export type {
   MacroTechId,
   MapSizeTier,
   PlanetaryDevId,
+  RepeatableTechId,
   SnapshotEmpire,
   SnapshotSystem,
   StarClass,
@@ -58,12 +59,18 @@ export type {
 } from "./interpolate.js";
 export {
   beginEngagement,
+  captureFlipRatio,
+  captureMinPushRatio,
   colonizeCost,
   abandonSystem,
+  applyCapitalFallout,
+  isEnclave,
   pressureBorder,
+  processEnclaves,
   reinforceSystem,
   resolveContestedFronts,
   setSystemOwner,
+  systemsConnectedToCapital,
   tryColonize,
 } from "./combat.js";
 export {
@@ -78,9 +85,16 @@ export {
   MACRO_TECH_IDS,
   PLANETARY_DEV_IDS,
   PLANETARY_LABEL,
+  REPEATABLE_BLURB,
+  REPEATABLE_LABEL,
+  REPEATABLE_TECH_IDS,
+  TECH_BLURB,
   TECH_LABEL,
   TECH_TIER,
+  canResearch,
   militaryTechScore,
+  totalTechScore,
 } from "./tech.js";
+export { ENCLAVE_GRACE_PULSES } from "./types.js";
 export { EMPIRE_SWATCH_BANK, swatchForIndex } from "./swatches.js";
 export type { EmpireSwatch } from "./swatches.js";

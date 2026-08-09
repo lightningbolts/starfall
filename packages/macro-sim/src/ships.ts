@@ -25,14 +25,14 @@ export interface ShipStats {
 }
 
 export const SHIP_STATS: Record<MacroShipType, ShipStats> = {
-  corvette: { creditCost: 8, power: 10, upkeep: 0.02 },
-  destroyer: { creditCost: 22, power: 24, upkeep: 0.04 },
-  cruiser: { creditCost: 45, power: 42, upkeep: 0.07 },
-  battleship: { creditCost: 110, power: 95, upkeep: 0.14 },
-  carrier: { creditCost: 130, power: 88, upkeep: 0.15 },
-  raider: { creditCost: 14, power: 16, upkeep: 0.03 },
-  dreadnought: { creditCost: 280, power: 220, upkeep: 0.28 },
-  defense_platform: { creditCost: 35, power: 50, upkeep: 0.05 },
+  corvette: { creditCost: 1, power: 10, upkeep: 0.008 },
+  destroyer: { creditCost: 2, power: 24, upkeep: 0.012 },
+  cruiser: { creditCost: 4, power: 42, upkeep: 0.02 },
+  battleship: { creditCost: 8, power: 95, upkeep: 0.035 },
+  carrier: { creditCost: 10, power: 88, upkeep: 0.04 },
+  raider: { creditCost: 1, power: 16, upkeep: 0.01 },
+  dreadnought: { creditCost: 16, power: 280, upkeep: 0.045 },
+  defense_platform: { creditCost: 3, power: 50, upkeep: 0.015 },
 };
 
 /** Soft rock-paper-scissors counters. */
@@ -222,10 +222,11 @@ export function defenseFromGarrison(
 ): MacroFleetComposition {
   const mix: MacroFleetComposition = {};
   const g = Math.max(0, garrison);
-  mix.corvette = Math.floor(g / 14);
-  mix.destroyer = Math.floor(g / 40);
-  mix.cruiser = Math.floor(g / 70);
-  if (platforms > 0) mix.defense_platform = platforms;
+  // ~40× denser local defense fleets vs the old /14–/70 conversion.
+  mix.corvette = Math.floor(g / 0.35);
+  mix.destroyer = Math.floor(g / 1.2);
+  mix.cruiser = Math.floor(g / 2.2);
+  if (platforms > 0) mix.defense_platform = platforms * 12;
   if (fleetCount(mix) === 0 && g > 5) mix.corvette = 1;
   return mix;
 }
@@ -284,10 +285,14 @@ export function tacticsFactor(
   if (empire.archetype === "reckless") base += (rng() - 0.4) * 0.35;
   if (empire.researched.has("tactical_ai")) base += 0.1;
   if (empire.researched.has("deep_scanners")) base += 0.05;
+  if (empire.researched.has("sensor_grid")) base += 0.08;
+  if (empire.researched.has("quantum_command")) base += 0.12;
   if (mode === "siege" && empire.researched.has("iron_curtain")) base += 0.08;
   if (mode === "fleet_battle" && empire.researched.has("war_mobilization")) {
     base += 0.08;
   }
+  const doctrine = empire.repeatableLevels.fleet_doctrine_ex ?? 0;
+  if (doctrine > 0) base += Math.min(0.2, doctrine * 0.02);
   return Math.min(1.45, Math.max(0.55, base));
 }
 
@@ -303,6 +308,11 @@ export function doctrineFactor(empire: Empire, mode: EngagementMode): number {
   if (empire.researched.has("galactic_hegemony") && empire.traits.ambition > 0.6) {
     m += 0.08;
   }
+  if (empire.researched.has("xenology_bureau") && empire.traits.xenophobia > 0.55) {
+    m += 0.06;
+  }
+  const doctrine = empire.repeatableLevels.fleet_doctrine_ex ?? 0;
+  if (doctrine > 0) m += Math.min(0.25, doctrine * 0.02);
   return m;
 }
 

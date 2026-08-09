@@ -1,5 +1,5 @@
 import { runBotDecisions } from "./bots.js";
-import { resolveContestedFronts } from "./combat.js";
+import { processEnclaves, resolveContestedFronts } from "./combat.js";
 import {
   applyEconomyTick,
   applyEmpireEconomyPulse,
@@ -41,9 +41,9 @@ export function stepLogic(state: MacroState, config: MacroConfig): StepResult {
     for (const eid of state.empireOrder) {
       const empire = state.empires[eid]!;
       applyEmpireEconomyPulse(state, empire);
-      // Decay on economy pulses so modifiers last seconds/minutes, not blinks.
       decayEmpireModifiers(empire);
     }
+    newEvents.push(...processEnclaves(state));
   }
 
   const botEvery = Math.max(1, config.botCadenceTicks);

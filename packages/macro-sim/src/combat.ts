@@ -27,6 +27,7 @@ import type {
   StarSystem,
   SystemId,
 } from "./types.js";
+import { ENCLAVE_GRACE_PULSES } from "./types.js";
 
 export interface CombatResult {
   events: MacroEvent[];
@@ -123,8 +124,9 @@ export function tryColonize(
   target.population = Math.max(target.population, 14);
   target.credits = 4;
   target.garrison = Math.max(target.garrison, 10);
-  target.developments = new Set();
+  // Preserve leftover planetary infrastructure from prior abandonment.
   syncDefenseMix(target);
+  delete state.enclavePulses[target.id];
 
   for (const funder of adjacent) {
     if (funder.garrison <= 18) continue;
@@ -160,30 +162,45 @@ export function resolveContestedFronts(
         const to = system.contested.vs;
         if (from && to) {
           const owner = state.empires[from]!;
-          const wasCapital = owner.capitalSystemId === sid;
-          const leftover = fleetPower(system.engagement?.committedA ?? emptyFleet()) * 0.2;
-          flipSystem(state, system, to, Math.max(8, leftover / 10));
-          flipped.push(sid);
-          events.push(
-            emit(state, {
-              tick,
-              kind: "front_collapse",
-              empireIds: [from, to],
-              systemId: sid,
-              text: `${state.empires[to]!.name} takes ${system.name} from ${owner.name}.`,
-            }),
+          const attacker = state.empires[to];
+          const attPow = Math.max(
+            1,
+            fleetPower(attacker?.fleet ?? emptyFleet()) * 0.15 +
+              fleetPower(system.engagement?.committedA ?? emptyFleet()),
           );
-          if (wasCapital) {
+          const defPow = Math.max(
+            1,
+            fleetPower(system.defenseMix) + system.garrison * 1.35,
+          );
+          if (attPow / defPow < captureFlipRatio(system, owner)) {
+            // Siege continues but ownership does not flip yet.
+          } else {
+            const wasCapital = owner.capitalSystemId === sid;
+            const leftover =
+              fleetPower(system.engagement?.committedA ?? emptyFleet()) * 0.2;
+            flipSystem(state, system, to, Math.max(8, leftover / 10));
+            flipped.push(sid);
             events.push(
               emit(state, {
                 tick,
-                kind: "capital_fallen",
+                kind: "front_collapse",
                 empireIds: [from, to],
                 systemId: sid,
-                text: `${owner.name} loses its throneworld ${system.name} to ${state.empires[to]!.name}!`,
+                text: `${state.empires[to]!.name} takes ${system.name} from ${owner.name}.`,
               }),
             );
-            rehomeOrEliminate(state, from, events);
+            if (wasCapital) {
+              events.push(
+                emit(state, {
+                  tick,
+                  kind: "capital_fallen",
+                  empireIds: [from, to],
+                  systemId: sid,
+                  text: `${owner.name} loses its throneworld ${system.name} to ${state.empires[to]!.name}! Succession crisis grips the realm.`,
+                }),
+              );
+              rehomeOrEliminate(state, from, events);
+            }
           }
         }
       }
@@ -208,10 +225,15 @@ export function resolveContestedFronts(
         1,
         fleetPower(enemy.fleet) * 0.15 + n.garrison,
       );
-      const defenderPower = Math.max(
+      let defenderPower = Math.max(
         1,
-        fleetPower(system.defenseMix) + system.garrison,
+        fleetPower(system.defenseMix) + system.garrison * 1.35,
       );
+      if (owner.researched.has("planetary_shields")) defenderPower *= 1.15;
+      if (owner.researched.has("advanced_shields")) defenderPower *= 1.25;
+      if (system.developments.has("fortress_complex")) defenderPower *= 1.35;
+      if (system.developments.has("orbital_batteries")) defenderPower *= 1.2;
+      if (owner.capitalSystemId === sid) defenderPower *= 1.3;
       const pressure = attackerPower / defenderPower;
       if (pressure > bestRatio) {
         bestRatio = pressure;
@@ -231,15 +253,33 @@ export function resolveContestedFronts(
       continue;
     }
 
+    const minPush = captureMinPushRatio(system, owner);
+    const minFlip = captureFlipRatio(system, owner);
+
+    // Under-gunned attackers cannot meaningfully advance contested %.
+    if (bestRatio < minPush) {
+      if (system.contested?.vs === bestVs) {
+        system.contested.pct = Math.max(
+          0,
+          system.contested.pct - config.contestedDriftScale * 0.8,
+        );
+        if (system.contested.pct <= 0.02) system.contested = null;
+      }
+      continue;
+    }
+
     // Near-parity still drifts slowly toward the stronger neighbor.
-    const advantage = Math.tanh((bestRatio - 0.85) * 1.1);
-    const decisive = 1 + Math.min(3, Math.max(0, bestRatio - 1.3));
+    const advantage = Math.tanh((bestRatio - minPush) * 1.1);
+    const decisive = 1 + Math.min(3, Math.max(0, bestRatio - minFlip));
     let drift =
       config.contestedDriftScale *
       Math.max(0.15, advantage) *
       decisive *
       (0.6 + 0.4 * (state.empires[bestVs]?.traits.aggression ?? 0.5));
     if (state.empires[bestVs]?.researched.has("deep_scanners")) drift *= 1.15;
+    if (state.empires[bestVs]?.researched.has("espionage_bureau")) drift *= 1.2;
+    if (state.empires[bestVs]?.researched.has("void_navigation")) drift *= 1.1;
+    if (bestRatio < minFlip) drift *= 0.45;
 
     if (!system.contested || system.contested.vs !== bestVs) {
       system.contested = { vs: bestVs, pct: Math.max(0, drift) };
@@ -248,18 +288,21 @@ export function resolveContestedFronts(
     }
 
     // Auto-escalate to an engagement when pressure is meaningful.
-    if (system.contested.pct > 0.18 && bestRatio > 0.9 && rng() < 0.08) {
+    if (system.contested.pct > 0.18 && bestRatio > minPush && rng() < 0.08) {
       const mode: EngagementMode =
         owner.capitalSystemId === sid ||
         system.developments.has("fortress_complex")
           ? "siege"
-          : bestRatio > 1.4
+          : bestRatio > minFlip * 1.1
             ? "fleet_battle"
             : "skirmish";
       beginEngagement(state, system, bestVs, mode, rng);
     }
 
-    if (system.contested.pct >= config.contestedFlipThreshold) {
+    if (
+      system.contested.pct >= config.contestedFlipThreshold &&
+      bestRatio >= minFlip
+    ) {
       const from = system.ownerId;
       const to = bestVs;
       const wasCapital = owner.capitalSystemId === sid;
@@ -283,7 +326,7 @@ export function resolveContestedFronts(
             kind: "capital_fallen",
             empireIds: [from, to],
             systemId: sid,
-            text: `${owner.name} loses its throneworld ${system.name} to ${state.empires[to]!.name}!`,
+            text: `${owner.name} loses its throneworld ${system.name} to ${state.empires[to]!.name}! Succession crisis grips the realm.`,
           }),
         );
         rehomeOrEliminate(state, from, events);
@@ -292,6 +335,29 @@ export function resolveContestedFronts(
   }
 
   return { events, flipped };
+}
+
+/** Minimum attacker/defender ratio before contested % can rise. */
+export function captureMinPushRatio(system: StarSystem, owner: Empire): number {
+  let r = 1.05;
+  if (system.developments.has("orbital_batteries")) r += 0.15;
+  if (system.developments.has("fortress_complex")) r += 0.25;
+  if (owner.capitalSystemId === system.id) r += 0.2;
+  if (owner.researched.has("planetary_shields")) r += 0.08;
+  if (owner.researched.has("advanced_shields")) r += 0.12;
+  return r;
+}
+
+/** Force ratio required to actually flip ownership. */
+export function captureFlipRatio(system: StarSystem, owner: Empire): number {
+  let r = 1.25;
+  if (system.developments.has("orbital_batteries")) r += 0.25;
+  if (system.developments.has("fortress_complex")) r += 0.45;
+  if (owner.capitalSystemId === system.id) r += 0.55;
+  if (owner.researched.has("planetary_shields")) r += 0.1;
+  if (owner.researched.has("advanced_shields")) r += 0.2;
+  if (owner.researched.has("iron_curtain")) r += 0.1;
+  return r;
 }
 
 function tickEngagement(
@@ -320,9 +386,10 @@ function tickEngagement(
     doctrineFactor(defender, eng.mode);
 
   if (eng.mode === "siege") {
-    bEff *= 1.15 + (system.developments.has("orbital_batteries") ? 0.2 : 0);
-    bEff *= system.developments.has("fortress_complex") ? 1.25 : 1;
-    if (defender.researched.has("planetary_shields")) bEff *= 1.1;
+    bEff *= 1.35 + (system.developments.has("orbital_batteries") ? 0.25 : 0);
+    bEff *= system.developments.has("fortress_complex") ? 1.4 : 1;
+    if (defender.researched.has("planetary_shields")) bEff *= 1.15;
+    if (defender.researched.has("advanced_shields")) bEff *= 1.25;
   }
   if (eng.mode === "raid") {
     aEff *= 1.1;
@@ -330,6 +397,10 @@ function tickEngagement(
   }
   if (attacker.modifiers.attackPressureTicksLeft > 0) {
     aEff *= attacker.modifiers.attackPressure;
+  }
+  if (attacker.researched.has("warp_doctrine") && eng.mode !== "siege") {
+    // Faster tempo — already reflected in duration; slight combat edge.
+    aEff *= 1.05;
   }
 
   const fraction = 1 / Math.max(1, eng.ticksRemaining);
@@ -365,7 +436,7 @@ function tickEngagement(
   syncDefenseMix(system);
 
   const wiped =
-    fleetPower(eng.committedA) < 5 || fleetPower(eng.committedB) < 5;
+    fleetPower(eng.committedA) < 50 || fleetPower(eng.committedB) < 50;
   if (eng.ticksRemaining <= 0 || wiped) {
     const aWon = fleetPower(eng.committedA) >= fleetPower(eng.committedB);
     // Return survivors to strategic pools.
@@ -410,7 +481,13 @@ export function beginEngagement(
   if (!attacker?.alive || !defender?.alive) return null;
 
   const commitFrac =
-    mode === "skirmish" ? 0.06 : mode === "raid" ? 0.05 : mode === "siege" ? 0.18 : 0.12;
+    mode === "skirmish"
+      ? 0.08
+      : mode === "raid"
+        ? 0.06
+        : mode === "siege"
+          ? 0.28
+          : 0.16;
   const pressure =
     attacker.modifiers.attackPressureTicksLeft > 0
       ? attacker.modifiers.attackPressure
@@ -420,12 +497,12 @@ export function beginEngagement(
   const committedB = cloneFleet(system.defenseMix);
   // Pull some defender strategic fleet for non-raid.
   if (mode !== "raid") {
-    const reinf = takeShips(defender.fleet, mode === "siege" ? 0.1 : 0.07);
+    const reinf = takeShips(defender.fleet, mode === "siege" ? 0.14 : 0.09);
     Object.assign(committedB, mergeFleets(committedB, reinf));
   }
 
-  if (fleetPower(committedA) < 8 && fleetPower(attacker.fleet) > 0) {
-    Object.assign(committedA, takeShips(attacker.fleet, 0.08));
+  if (fleetPower(committedA) < 80 && fleetPower(attacker.fleet) > 0) {
+    Object.assign(committedA, takeShips(attacker.fleet, 0.1));
   }
 
   const totalPower = fleetPower(committedA) + fleetPower(committedB);
@@ -434,16 +511,23 @@ export function beginEngagement(
     Math.abs(fleetPower(committedA) - fleetPower(committedB)) /
       Math.max(1, totalPower);
   const siegeBonus =
-    (system.developments.has("fortress_complex") ? 1 : 0) +
-    (system.developments.has("orbital_batteries") ? 0.6 : 0) +
-    (defender.capitalSystemId === system.id ? 0.8 : 0);
+    (system.developments.has("fortress_complex") ? 1.4 : 0) +
+    (system.developments.has("orbital_batteries") ? 0.8 : 0) +
+    (defender.capitalSystemId === system.id ? 1.1 : 0) +
+    (defender.researched.has("advanced_shields") ? 0.7 : 0);
 
   let duration = engagementDuration(mode, totalPower, parity, siegeBonus);
   if (attacker.modifiers.attackPressureTicksLeft > 0 && mode !== "siege") {
     duration = Math.max(6, Math.round(duration * 0.7));
   }
+  if (attacker.researched.has("warp_doctrine") && mode !== "siege") {
+    duration = Math.max(6, Math.round(duration * 0.85));
+  }
   if (mode === "siege" && system.developments.has("fortress_complex")) {
-    duration = Math.round(duration * 1.25);
+    duration = Math.round(duration * 1.4);
+  }
+  if (mode === "siege" && defender.researched.has("advanced_shields")) {
+    duration = Math.round(duration * 1.2);
   }
 
   const intensity = engagementIntensity(
@@ -508,8 +592,9 @@ export function abandonSystem(
   system.population = Math.max(6, system.population * 0.35);
   system.credits = Math.max(0, system.credits * 0.15);
   system.garrison = Math.max(2, system.garrison * 0.2);
-  system.developments = new Set();
+  // Keep planetary developments as ruins for whoever recolonizes.
   syncDefenseMix(system);
+  delete state.enclavePulses[system.id];
 
   const verb =
     reason === "rebellion"
@@ -592,6 +677,117 @@ function rehomeOrEliminate(
     }
   }
   if (best) empire.capitalSystemId = best;
+  applyCapitalFallout(state, empire);
+}
+
+/**
+ * Losing the throneworld is a real shock — economy, garrisons, and fleet take a
+ * lasting hit, but enough remains for a determined comeback.
+ */
+export function applyCapitalFallout(state: MacroState, empire: Empire): void {
+  const rng = createRng(
+    state.seed ^ (state.tick * 0x27d4eb2d) ^ (empire.id.length * 9973),
+  );
+  // Economy-pulse duration (decayed once per pulse). Wide variance: ~90–300s at 1×.
+  const duration = 90 + Math.floor(rng() * 211);
+  empire.modifiers.productionMult = 0.55;
+  empire.modifiers.productionTicksLeft = duration;
+  empire.modifiers.garrisonMult = 0.7;
+  empire.modifiers.garrisonTicksLeft = duration;
+  empire.modifiers.attackPressure = 1;
+  empire.modifiers.attackPressureTicksLeft = 0;
+
+  // Scrap ~30% of the strategic fleet — painful, not existential.
+  for (const key of Object.keys(empire.fleet) as (keyof typeof empire.fleet)[]) {
+    const n = empire.fleet[key] ?? 0;
+    if (n <= 0) continue;
+    const keep = Math.max(0, Math.floor(n * 0.7));
+    if (keep <= 0) delete empire.fleet[key];
+    else empire.fleet[key] = keep;
+  }
+
+  for (const sid of empire.ownedSystems) {
+    const s = state.systems[sid]!;
+    const isNewCap = sid === empire.capitalSystemId;
+    s.credits *= isNewCap ? 0.75 : 0.6;
+    s.garrison = Math.max(4, s.garrison * (isNewCap ? 0.85 : 0.75));
+    s.population *= 0.9;
+    syncDefenseMix(s);
+  }
+
+  // Diplomatic instability — some allies walk away after the succession crisis.
+  for (const ally of [...empire.allies]) {
+    if (rng() > 0.4) continue;
+    const other = state.empires[ally];
+    if (!other) continue;
+    empire.allies = empire.allies.filter((a) => a !== ally);
+    other.allies = other.allies.filter((a) => a !== empire.id);
+  }
+}
+
+/**
+ * Systems reachable from the capital through owned hyperlane links.
+ */
+export function systemsConnectedToCapital(
+  state: MacroState,
+  empire: Empire,
+): Set<SystemId> {
+  const connected = new Set<SystemId>();
+  const capital = empire.capitalSystemId;
+  if (!empire.ownedSystems.has(capital)) return connected;
+  const queue: SystemId[] = [capital];
+  connected.add(capital);
+  while (queue.length > 0) {
+    const sid = queue.pop()!;
+    for (const nid of state.systems[sid]!.hyperlanes) {
+      if (connected.has(nid)) continue;
+      if (!empire.ownedSystems.has(nid)) continue;
+      connected.add(nid);
+      queue.push(nid);
+    }
+  }
+  return connected;
+}
+
+export function isEnclave(
+  state: MacroState,
+  empire: Empire,
+  systemId: SystemId,
+): boolean {
+  if (!empire.ownedSystems.has(systemId)) return false;
+  if (systemId === empire.capitalSystemId) return false;
+  return !systemsConnectedToCapital(state, empire).has(systemId);
+}
+
+/**
+ * Drain capital-disconnected pockets and abandon them after a short grace.
+ * Called once per economy pulse.
+ */
+export function processEnclaves(state: MacroState): MacroEvent[] {
+  const events: MacroEvent[] = [];
+  for (const eid of state.empireOrder) {
+    const empire = state.empires[eid]!;
+    if (!empire.alive || empire.ownedSystems.size <= 1) continue;
+    const connected = systemsConnectedToCapital(state, empire);
+    for (const sid of [...empire.ownedSystems]) {
+      if (connected.has(sid)) {
+        delete state.enclavePulses[sid];
+        continue;
+      }
+      const system = state.systems[sid]!;
+      if (system.engagement) continue;
+      // Enclave pressure — garrisons and treasuries bleed while cut off.
+      system.garrison = Math.max(2, system.garrison * 0.72);
+      system.credits = Math.max(0, system.credits * 0.65);
+      syncDefenseMix(system);
+      const pulses = (state.enclavePulses[sid] ?? 0) + 1;
+      state.enclavePulses[sid] = pulses;
+      if (pulses >= ENCLAVE_GRACE_PULSES && sid !== empire.capitalSystemId) {
+        events.push(...abandonSystem(state, system, "withdraw"));
+      }
+    }
+  }
+  return events;
 }
 
 function clamp01(n: number): number {
@@ -627,7 +823,7 @@ export function pressureBorder(
     owner.capitalSystemId === systemId ||
     system.developments.has("fortress_complex")
       ? "siege"
-      : amount > 0.2 || fleetPower(attacker.fleet) > 200
+      : amount > 0.2 || fleetPower(attacker.fleet) > 8000
         ? "fleet_battle"
         : "skirmish";
 

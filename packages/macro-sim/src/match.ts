@@ -104,6 +104,7 @@ export function createMacroMatch(opts: CreateMacroOptions = {}): {
         attackPressureTicksLeft: 0,
       },
       researched: new Set(),
+      repeatableLevels: {},
       fleet: emptyFleet(),
     };
     empireOrder.push(id);
@@ -114,8 +115,11 @@ export function createMacroMatch(opts: CreateMacroOptions = {}): {
     home.population = 70 + rng() * 40;
     home.credits = 55 + rng() * 45;
     home.garrison = 45 + rng() * 30;
-    // Starter flotilla
-    empires[id]!.fleet = { corvette: 6 + Math.floor(rng() * 4), raider: 1 };
+    // Starter flotilla (~40× prior scale)
+    empires[id]!.fleet = {
+      corvette: 240 + Math.floor(rng() * 160),
+      raider: 40 + Math.floor(rng() * 20),
+    };
   }
 
   const state: MacroState = {
@@ -129,6 +133,7 @@ export function createMacroMatch(opts: CreateMacroOptions = {}): {
     status: "running",
     systemOrder: [...geometry.ids],
     empireOrder,
+    enclavePulses: {},
   };
 
   state.eventSeq = 1;

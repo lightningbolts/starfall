@@ -18,14 +18,14 @@ A separate mode from the competitive real-time game — same universe theme, dif
 
 | Parameter | Value |
 |---|---|
-| Logic tick interval | **100ms** at 1× (pause / 1× / 2× / 4× / **10×**) |
+| Logic tick interval | **100ms** at 1× (pause / 1× / 2× / 4× / **10×** / **20×**) |
 | Economy pulse | every **10** logic ticks (~1s) |
 | Bot cadence | every **5** logic ticks |
 | Production variance | **±14%** per economy pulse |
 | Systems (small / medium / large) | **600 / 1200 / 2400** |
 | Empire count | `clamp(round(systems / 50), 12, 48)` |
 | Starting territory | **capital system only** |
-| Contested flip | ~**0.72**; drift scale ~**0.01** |
+| Contested flip | ~**0.78**; drift scale ~**0.008**; force-ratio gates for fortress/capital worlds |
 | Event chance / tick | ~**0.02** |
 | Render interpolation | ease-in-out cubic between last and next snapshots |
 
@@ -41,11 +41,17 @@ Traits ∈ [0, 1]: `aggression`, `loyalty`, `risk`, `greed`, `ambition`, `xenoph
 
 ## 3. Tech (empire + planetary)
 
-**Empire tech** (~20 techs, 4 flat tiers): permanent `Empire.researched` unlocks — industry, colony admin, militia, archives, megafarms, fortress worlds, diplomacy, scanners, escorts, war mobilization, planetary shields (doctrine), capital shipyards, xenology, singularity labs, tactical AI, hegemony, eternal archives, iron curtain, pax federation, supercapital frame.
+**Empire tech** (~34 named techs, 5 flat tiers): permanent `Empire.researched` unlocks — industry, colony admin, militia, archives, megafarms, fortress worlds, diplomacy, scanners, escorts, medical corps, logistics, war mobilization, planetary shields, capital shipyards, xenology, singularity labs, tactical AI, fleet logistics, terraforming, espionage, warp doctrine, hegemony, eternal archives, iron curtain, pax federation, supercapital frame, advanced shields, sensor grid, medical nanites, stellar engineering, quantum command, living metal, void navigation, genesis protocols.
 
-**Planetary developments** (max 4 per system): agro domes, mining spires, orbital batteries, shipyard ring, research campus, fortress complex, trade hub, plague hospitals, hidden arsenals. Mostly stripped on conquest.
+**Repeatable late-game tracks** (unlimited): Applied Sciences, Fleet Doctrine Ex, Industrial Excellence — escalate in cost and stack small permanent bonuses so research never hard-caps.
 
-Breakthrough events often grant a permanent empire tech.
+**Planetary developments** (max 4 per system): agro domes, mining spires, orbital batteries, shipyard ring, research campus, fortress complex, trade hub, plague hospitals, hidden arsenals. Civilian developments persist when a system is abandoned; conquest strips military sites (batteries, fortress, arsenals, shipyards) but keeps civilian infrastructure.
+
+Breakthrough events often grant a permanent empire tech or a repeatable level.
+
+Territory that loses hyperlane connectivity to the capital becomes an **enclave**, bleeds garrison/credits, and is abandoned after a short grace — wartime pockets do not persist.
+
+**Capital loss:** surviving empires rehome, then take a succession shock — ~45% production and ~30% garrison growth for a long, variable stretch, ~30% fleet scrap, treasury/garrison bleed on remaining worlds, and some allies may defect. Enough remains to stage a comeback.
 
 ## 4. Combat systems
 
@@ -62,7 +68,7 @@ Resolution uses fleet RPS + tactics/tech/doctrine/home advantage so underdogs ca
 
 ## 5. Randomization / events
 
-Weighted world events: production surge, rebellion, relic, pirate raid, disaster, offensive blitz, defensive stronghold, plague, robbery, tech breakthrough, coup/regime change. Economy includes sprawl upkeep, ship upkeep, soft pop ceilings / famine.
+Weighted world events: production surge, rebellion, relic, pirate raid, disaster, offensive blitz, defensive stronghold, plague, robbery, tech breakthrough, coup/regime change. Economy includes sprawl upkeep, ship upkeep, soft pop ceilings / famine. Temporary modifiers last **tens to hundreds of economy pulses** with wide random variance (not blink-length buffs).
 
 ## 6. Map presentation
 
@@ -73,7 +79,7 @@ Weighted world events: production surge, rebellion, relic, pirate raid, disaster
 
 ## 7. Dashboard
 
-Panels: roster, feed, trends, **military** (fleet power, mix, tech score, matchups, active engagements), overlays. Speed 1/2/4/10. Keyboard: space pause, 1/2/4/0|5→10×, F fit, Esc clear focus.
+Panels: roster, feed, trends, **military** (fleet power, mix, tech score, matchups, active engagements), **tech** (full catalog by tier + repeatables; focus marks ownership), overlays. Speed 1/2/4/10/20. Keyboard: space pause, 1/2/4/0|5→10×, 6|8→20×, F fit, Esc clear focus.
 
 ## 8. Empire naming
 
