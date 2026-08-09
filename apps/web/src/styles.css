@@ -2059,7 +2059,8 @@ body.chronicle-active > #app {
 .chronicle-pie {
   pointer-events: auto;
   position: absolute;
-  right: 0.75rem;
+  /* Sit left of the right rail so toggle tabs never cover the chart. */
+  right: calc(0.75rem + 6.75rem + 0.5rem);
   bottom: 0.75rem;
   width: min(240px, calc(100vw - 1.5rem));
   max-height: min(420px, calc(100vh - 6rem));
@@ -2070,7 +2071,17 @@ body.chronicle-active > #app {
   border-radius: var(--sf-radius);
   backdrop-filter: blur(6px);
   font-size: 0.78rem;
-  z-index: 2;
+  z-index: 4;
+}
+
+.chronicle-pie.is-clear-overlays {
+  /* Also clear the bottom-right Overlays panel. */
+  right: calc(0.75rem + 6.75rem + min(250px, 34vw) + 1rem);
+}
+
+.chronicle-pie.is-clear-dock {
+  /* Clear a full-height right dock panel (Military / Tech / etc.). */
+  right: calc(0.75rem + 6.75rem + min(520px, calc(100vw - 8rem)) + 0.75rem);
 }
 
 .chronicle-pie[hidden] {
@@ -2388,6 +2399,15 @@ body.chronicle-active > #app {
 }
 
 @media (max-width: 800px) {
+  .chronicle-pie,
+  .chronicle-pie.is-clear-overlays,
+  .chronicle-pie.is-clear-dock {
+    right: 0.5rem;
+    left: auto;
+    bottom: 0.75rem;
+    max-width: min(240px, calc(100vw - 1rem));
+  }
+
   .chronicle-right {
     right: 0.5rem;
     left: 0.5rem;

@@ -549,6 +549,15 @@ export class MacroDashboard {
     if (pieMetric && pieMetric.value !== this.state.pieMetric) {
       pieMetric.value = this.state.pieMetric;
     }
+    const pie = this.root.querySelector<HTMLElement>("#ch-pie");
+    if (pie && !pie.hidden) {
+      const dockOpen = EXCLUSIVE_PANELS.some((key) => this.state.panels[key]);
+      pie.classList.toggle("is-clear-dock", dockOpen);
+      pie.classList.toggle(
+        "is-clear-overlays",
+        this.state.panels.overlays && !dockOpen,
+      );
+    }
     this.syncRosterHeaders();
   }
 
@@ -731,6 +740,12 @@ export class MacroDashboard {
 
     const show = this.state.overlays.pie;
     card.hidden = !show;
+    const dockOpen = EXCLUSIVE_PANELS.some((key) => this.state.panels[key]);
+    card.classList.toggle("is-clear-dock", show && dockOpen);
+    card.classList.toggle(
+      "is-clear-overlays",
+      show && this.state.panels.overlays && !dockOpen,
+    );
     if (!show) {
       this.lastPieSig = "";
       return;
