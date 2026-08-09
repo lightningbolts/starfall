@@ -2054,6 +2054,112 @@ body.chronicle-active > #app {
   display: none;
 }
 
+/* —— Empire share pie overlay —————————————————————————————————— */
+
+.chronicle-pie {
+  pointer-events: auto;
+  position: absolute;
+  right: 0.75rem;
+  bottom: 0.75rem;
+  width: min(240px, calc(100vw - 1.5rem));
+  max-height: min(420px, calc(100vh - 6rem));
+  overflow: auto;
+  padding: 0.55rem 0.65rem;
+  background: color-mix(in srgb, var(--sf-void) 84%, transparent);
+  border: 1px solid var(--sf-hud-border-hi);
+  border-radius: var(--sf-radius);
+  backdrop-filter: blur(6px);
+  font-size: 0.78rem;
+  z-index: 2;
+}
+
+.chronicle-pie[hidden] {
+  display: none;
+}
+
+.ch-pie-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.45rem;
+  margin-bottom: 0.45rem;
+  font-family: var(--sf-font-display);
+}
+
+.ch-pie-head select {
+  font: inherit;
+  font-size: 0.72rem;
+  color: var(--sf-text);
+  background: color-mix(in srgb, var(--sf-void) 70%, transparent);
+  border: 1px solid var(--sf-hud-border);
+  border-radius: var(--sf-radius);
+  padding: 0.15rem 0.3rem;
+}
+
+.ch-pie-chart {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 0.4rem;
+}
+
+.ch-pie-svg {
+  width: 148px;
+  height: 148px;
+}
+
+.ch-pie-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.ch-pie-legend-item {
+  display: grid;
+  grid-template-columns: 0.55rem 1fr auto auto;
+  gap: 0.35rem;
+  align-items: center;
+  width: 100%;
+  padding: 0.15rem 0.2rem;
+  border: 0;
+  border-radius: var(--sf-radius);
+  background: transparent;
+  color: var(--sf-text-dim);
+  font: inherit;
+  font-size: 0.68rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ch-pie-legend-item:hover,
+.ch-pie-legend-item.is-focus {
+  background: color-mix(in srgb, var(--sf-self) 12%, transparent);
+  color: var(--sf-text);
+}
+
+.ch-pie-legend-item i {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 1px;
+}
+
+.ch-pie-legend-item span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ch-pie-legend-item b,
+.ch-pie-legend-item em {
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+}
+
+.ch-pie-legend-item em {
+  color: var(--sf-text-dim);
+  min-width: 2.2rem;
+  text-align: right;
+}
+
 .ch-sel-head {
   display: flex;
   align-items: center;

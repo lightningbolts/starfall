@@ -36,7 +36,23 @@ export type OverlayId =
   | "diplomacy"
   | "frontiers"
   | "lanes"
-  | "labels";
+  | "labels"
+  | "pie";
+
+export type PieMetric =
+  | "territory"
+  | "population"
+  | "credits"
+  | "garrison"
+  | "fleetPower";
+
+const PIE_METRIC_LABEL: Record<PieMetric, string> = {
+  territory: "Systems",
+  population: "Population",
+  credits: "Credits",
+  garrison: "Garrison",
+  fleetPower: "Fleet power",
+};
 
 export type RosterSort =
   | "territory"
@@ -73,6 +89,7 @@ export interface DashboardState {
   militarySort: MilitarySort;
   militaryAsc: boolean;
   overlays: Record<OverlayId, boolean>;
+  pieMetric: PieMetric;
   panels: {
     roster: boolean;
     feed: boolean;
@@ -115,7 +132,9 @@ export function createDashboardState(): DashboardState {
       frontiers: false,
       lanes: true,
       labels: true,
+      pie: false,
     },
+    pieMetric: "territory",
     // Map-first: only roster + feed open by default
     panels: {
       roster: true,
@@ -195,6 +214,7 @@ export class MacroDashboard {
   private lastTrendsSig = "";
   private lastSelectionSig = "";
   private lastTechSig = "";
+  private lastPieSig = "";
   private lastView: InterpolatedSnapshot | null = null;
 
   constructor(
@@ -264,6 +284,7 @@ export class MacroDashboard {
       this.renderTechCatalog(view);
       this.renderFocusLabel(view);
       this.renderSelection(view);
+      this.renderPieOverlay(view);
     } else if (!allowHeavy) {
       // Keep tick chrome live; defer the heavy panels until pointer-up.
       this.dirty = true;
@@ -324,6 +345,17 @@ export class MacroDashboard {
           this.state.overlays[key] = input.checked;
           this.changed();
         });
+      });
+
+    this.root
+      .querySelector("#ch-pie-metric")
+      ?.addEventListener("change", (e) => {
+        const value = (e.target as HTMLSelectElement).value as PieMetric;
+        if (value in PIE_METRIC_LABEL) {
+          this.state.pieMetric = value;
+          this.lastPieSig = "";
+          this.changed();
+        }
       });
 
     this.root.querySelector("#ch-pause")?.addEventListener("pointerdown", (e) => {
@@ -417,6 +449,14 @@ export class MacroDashboard {
           return;
         }
 
+        const pieEmpire = target.closest<HTMLElement>("[data-pie-empire]");
+        if (pieEmpire) {
+          e.preventDefault();
+          const id = pieEmpire.dataset.pieEmpire as EmpireId;
+          this.setFocus(this.state.focusEmpireId === id ? null : id);
+          return;
+        }
+
         const closeEmpire = target.closest("#ch-close-empire");
         if (closeEmpire) {
           e.preventDefault();
@@ -504,6 +544,10 @@ export class MacroDashboard {
     const pin = this.root.querySelector<HTMLSelectElement>("#ch-pin-n");
     if (pin && pin.value !== String(this.state.pinTopN)) {
       pin.value = String(this.state.pinTopN);
+    }
+    const pieMetric = this.root.querySelector<HTMLSelectElement>("#ch-pie-metric");
+    if (pieMetric && pieMetric.value !== this.state.pieMetric) {
+      pieMetric.value = this.state.pieMetric;
     }
     this.syncRosterHeaders();
   }
@@ -679,6 +723,67 @@ export class MacroDashboard {
     label.textContent = this.state.focusEmpireId
       ? (view.empires[this.state.focusEmpireId]?.name ?? "—")
       : "All empires";
+  }
+
+  private renderPieOverlay(view: InterpolatedSnapshot): void {
+    const card = this.root.querySelector<HTMLElement>("#ch-pie");
+    if (!card) return;
+
+    const show = this.state.overlays.pie;
+    card.hidden = !show;
+    if (!show) {
+      this.lastPieSig = "";
+      return;
+    }
+
+    const metric = this.state.pieMetric;
+    const slices = [...view.empireOrder]
+      .filter((id) => view.empires[id]!.alive)
+      .map((id) => {
+        const e = view.empires[id]!;
+        const value = Math.max(0, pieMetricValue(e, metric));
+        return {
+          id,
+          name: e.name,
+          color: empireCss(e),
+          value,
+        };
+      })
+      .filter((s) => s.value > 0)
+      .sort((a, b) => b.value - a.value);
+
+    const total = slices.reduce((sum, s) => sum + s.value, 0);
+    const focus = this.state.focusEmpireId;
+    const sig = `${metric}|${focus ?? ""}|${slices
+      .map((s) => `${s.id}:${Math.round(s.value)}`)
+      .join(",")}`;
+    if (sig === this.lastPieSig) return;
+    this.lastPieSig = sig;
+
+    const chart = card.querySelector("#ch-pie-chart");
+    const legend = card.querySelector("#ch-pie-legend");
+    if (!chart || !legend) return;
+
+    if (total <= 0 || slices.length === 0) {
+      chart.innerHTML = `<p class="ch-hint">No share data yet.</p>`;
+      legend.innerHTML = "";
+      return;
+    }
+
+    chart.innerHTML = pieSvg(slices, total, focus, metric);
+    legend.innerHTML = slices
+      .slice(0, 12)
+      .map((s) => {
+        const pct = (s.value / total) * 100;
+        const active = focus === s.id ? " is-focus" : "";
+        return `<button type="button" class="ch-pie-legend-item${active}" data-pie-empire="${s.id}">
+          <i style="background:${s.color}"></i>
+          <span>${escapeHtml(s.name)}</span>
+          <b>${fmt(s.value)}</b>
+          <em>${pct < 1 ? "<1" : pct.toFixed(0)}%</em>
+        </button>`;
+      })
+      .join("");
   }
 
   private renderSelection(view: InterpolatedSnapshot): void {
@@ -1278,6 +1383,73 @@ function fmt(n: number): string {
   return String(Math.round(n));
 }
 
+function pieMetricValue(
+  e: {
+    territory: number;
+    population: number;
+    credits: number;
+    garrison: number;
+    fleetPower: number;
+  },
+  metric: PieMetric,
+): number {
+  switch (metric) {
+    case "territory":
+      return e.territory;
+    case "population":
+      return e.population;
+    case "credits":
+      return e.credits;
+    case "garrison":
+      return e.garrison;
+    case "fleetPower":
+      return e.fleetPower;
+  }
+}
+
+function pieSvg(
+  slices: { id: string; color: string; value: number; name: string }[],
+  total: number,
+  focusId: string | null,
+  metric: PieMetric,
+): string {
+  const cx = 50;
+  const cy = 50;
+  const r = 42;
+  let angle = -Math.PI / 2;
+  const paths: string[] = [];
+
+  for (const slice of slices) {
+    const sweep = (slice.value / total) * Math.PI * 2;
+    if (sweep <= 0) continue;
+    const start = angle;
+    angle += sweep;
+    const x1 = cx + r * Math.cos(start);
+    const y1 = cy + r * Math.sin(start);
+    const x2 = cx + r * Math.cos(angle);
+    const y2 = cy + r * Math.sin(angle);
+    const large = sweep > Math.PI ? 1 : 0;
+    const dim =
+      focusId && focusId !== slice.id
+        ? ' opacity="0.35"'
+        : focusId === slice.id
+          ? ' stroke="var(--sf-text)" stroke-width="1.2"'
+          : "";
+    // Full circle needs a special path (single slice owning everything).
+    if (sweep >= Math.PI * 2 - 1e-6) {
+      paths.push(
+        `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${slice.color}"${dim} data-pie-empire="${slice.id}"/>`,
+      );
+    } else {
+      paths.push(
+        `<path d="M ${cx} ${cy} L ${x1.toFixed(2)} ${y1.toFixed(2)} A ${r} ${r} 0 ${large} 1 ${x2.toFixed(2)} ${y2.toFixed(2)} Z" fill="${slice.color}"${dim} data-pie-empire="${slice.id}"/>`,
+      );
+    }
+  }
+
+  return `<svg class="ch-pie-svg" viewBox="0 0 100 100" role="img" aria-label="${escapeHtml(PIE_METRIC_LABEL[metric])} share by empire">${paths.join("")}</svg>`;
+}
+
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, "&amp;")
@@ -1426,10 +1598,25 @@ function shellHtml(): string {
         <label class="ch-check"><input type="checkbox" data-overlay="labels" /> Names</label>
         <label class="ch-check"><input type="checkbox" data-overlay="diplomacy" /> Diplomatic pacts</label>
         <label class="ch-check"><input type="checkbox" data-overlay="frontiers" /> Highlight frontiers</label>
+        <label class="ch-check"><input type="checkbox" data-overlay="pie" /> Empire share pie</label>
         <p class="ch-hint">Click a star to inspect it. Scroll to zoom, drag to pan.</p>
       </aside>
     </div>
     <div class="chronicle-selection" id="ch-selection" hidden></div>
+    <aside class="chronicle-pie" id="ch-pie" hidden>
+      <div class="ch-pie-head">
+        <strong>Empire share</strong>
+        <select id="ch-pie-metric" aria-label="Share metric">
+          <option value="territory">Systems</option>
+          <option value="population">Population</option>
+          <option value="credits">Credits</option>
+          <option value="garrison">Garrison</option>
+          <option value="fleetPower">Fleet power</option>
+        </select>
+      </div>
+      <div id="ch-pie-chart" class="ch-pie-chart"></div>
+      <div id="ch-pie-legend" class="ch-pie-legend"></div>
+    </aside>
     </div>
   `;
 }

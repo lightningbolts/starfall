@@ -79,7 +79,7 @@ Weighted world events: production surge, rebellion, relic, pirate raid, disaster
 
 ## 7. Dashboard
 
-Panels: roster, feed, trends, **military** (fleet power, mix, tech score, matchups, active engagements), **tech** (full catalog by tier + repeatables; focus marks ownership), overlays. Speed 1/2/4/10/20. Keyboard: space pause, 1/2/4/0|5→10×, 6|8→20×, F fit, Esc clear focus.
+Panels: roster, feed, trends, **military**, **tech** (full catalog by tier + repeatables; focus marks ownership), overlays (including toggleable **empire share pie** for systems / population / credits / garrison / fleet power). Speed 1/2/4/10/20. Keyboard: space pause, 1/2/4/0|5→10×, 6|8→20×, F fit, Esc clear focus.
 
 ## 8. Empire naming
 
