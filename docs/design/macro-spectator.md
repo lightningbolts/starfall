@@ -12,7 +12,7 @@ A separate mode from the competitive real-time game — same universe theme, dif
 - **Territory cells are render-only.** Voronoi cells around each star rasterize into a soft empire coverage field (blobby fills + glowing rims). Cell edges are never stroked.
 - **Hyperlanes** form a planar, connected graph. Combat and colonization only travel along these links.
 - **AI empire count stays modest** — roughly a dozen to a few dozen empires so each grows a readable blob of territory.
-- **Fleets** are empire-level compositions (corvette → dreadnought + defense platforms). Contested fronts remain the territorial mechanism; engagements resolve combat over many ticks.
+- **Fleets** are empire-level compositions (corvette → dreadnought + defense platforms). Contested fronts remain the territorial mechanism; engagements resolve combat over many ticks. Logistics soft-cap hull counts from territory + shipyards; shipyards spend credits and taper as fleets overstretch so late-game power stays in the high-thousands / low-hundreds-of-thousands — not planetary-scale millions.
 
 ### Playtest defaults
 

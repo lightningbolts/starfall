@@ -115,10 +115,10 @@ export function createMacroMatch(opts: CreateMacroOptions = {}): {
     home.population = 70 + rng() * 40;
     home.credits = 55 + rng() * 45;
     home.garrison = 45 + rng() * 30;
-    // Starter flotilla (~40× prior scale)
+    // Starter flotilla — larger than original v1, still under early soft-cap
     empires[id]!.fleet = {
-      corvette: 240 + Math.floor(rng() * 160),
-      raider: 40 + Math.floor(rng() * 20),
+      corvette: 48 + Math.floor(rng() * 24),
+      raider: 8 + Math.floor(rng() * 6),
     };
   }
 

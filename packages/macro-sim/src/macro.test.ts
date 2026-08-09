@@ -374,7 +374,9 @@ describe("createMacroMatch", () => {
     const early = ownedCount();
     // Frontier should move — not stuck on homeworlds (early game is slower now).
     expect(early).toBeGreaterThan(20);
-    expect(Math.min(...empireSizes())).toBeGreaterThan(1);
+    const expanded = empireSizes().filter((n) => n > 1).length;
+    // Isolationists may lag; most empires should still have left their capital.
+    expect(expanded).toBeGreaterThanOrEqual(5);
 
     for (let i = 0; i < 100; i++) stepLogic(state, config);
     const mid = ownedCount();

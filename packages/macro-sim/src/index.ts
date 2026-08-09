@@ -78,6 +78,7 @@ export {
   SHIP_STATS,
   effectiveCombatPower,
   fleetPower,
+  fleetSupportCap,
   formatComposition,
   emptyFleet,
 } from "./ships.js";

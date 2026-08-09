@@ -1,6 +1,15 @@
 import type { Empire, MacroConfig, MacroState, StarSystem } from "./types.js";
 import type { MacroShipType } from "./types.js";
-import { addShips, fleetUpkeep, SHIP_STATS, syncDefenseMix } from "./ships.js";
+import {
+  addShips,
+  fleetBuildScale,
+  fleetCount,
+  fleetPressure,
+  fleetSupportCap,
+  fleetUpkeep,
+  SHIP_STATS,
+  syncDefenseMix,
+} from "./ships.js";
 import {
   applyShipyardPulse,
   creditProductionMult,
@@ -13,8 +22,8 @@ import {
 
 /** Per economy pulse (~1s at 100ms logic ticks). */
 const BASE_POP = 2.6;
-const BASE_CREDITS = 8.5;
-const BASE_GARRISON_SHARE = 0.28;
+const BASE_CREDITS = 7.0;
+const BASE_GARRISON_SHARE = 0.26;
 
 export function systemProductionMult(empire: Empire | undefined): number {
   if (!empire) return 1;
@@ -68,7 +77,20 @@ export function applyEconomyTick(
     4,
     system.garrison * (1 - 0.008 - sprawl * 0.00015),
   );
+  // Soft ceiling so local defense stays readable.
+  const gCap = 220 + system.developments.size * 50;
+  if (system.garrison > gCap) {
+    system.garrison -= (system.garrison - gCap) * 0.12;
+  }
   syncDefenseMix(system);
+}
+
+function countShipyards(state: MacroState, empire: Empire): number {
+  let n = 0;
+  for (const sid of empire.ownedSystems) {
+    if (state.systems[sid]!.developments.has("shipyard_ring")) n++;
+  }
+  return n;
 }
 
 export function applyEmpireEconomyPulse(
@@ -76,7 +98,16 @@ export function applyEmpireEconomyPulse(
   empire: Empire,
 ): void {
   if (!empire.alive) return;
-  const upkeep = fleetUpkeep(empire.fleet) * fleetUpkeepMult(empire);
+  const yards = countShipyards(state, empire);
+  const support = fleetSupportCap(empire.ownedSystems.size, yards, {
+    livingMetal: empire.researched.has("living_metal"),
+    warMobilization: empire.researched.has("war_mobilization"),
+  });
+  const pressure = fleetPressure(empire.fleet, support);
+  // Overstretched fleets pay rising logistics — soft-caps snowballs without a hard delete.
+  const stretch = pressure <= 1 ? 1 : 1 + (pressure - 1) * (pressure - 1) * 2.4;
+  const upkeep =
+    fleetUpkeep(empire.fleet) * fleetUpkeepMult(empire) * stretch;
   if (upkeep > 0) {
     let left = upkeep;
     for (const sid of empire.ownedSystems) {
@@ -87,13 +118,21 @@ export function applyEmpireEconomyPulse(
       if (left <= 0) break;
     }
     if (left > 0) {
-      // Scrap a batch when treasury cannot cover upkeep at the new fleet scale.
+      const frac = pressure > 1.2 ? 0.06 : 0.035;
       for (const key of Object.keys(empire.fleet) as MacroShipType[]) {
         const n = empire.fleet[key] ?? 0;
         if (n > 0) {
-          const scrap = Math.min(n, Math.max(1, Math.floor(n * 0.02)));
+          const scrap = Math.min(n, Math.max(1, Math.floor(n * frac)));
           empire.fleet[key] = Math.max(0, n - scrap);
           if ((empire.fleet[key] ?? 0) <= 0) delete empire.fleet[key];
+        }
+      }
+    } else if (pressure > 1.35 && fleetCount(empire.fleet) > support) {
+      // Paid but still over-cap — slow peacetime mothballing.
+      for (const key of Object.keys(empire.fleet) as MacroShipType[]) {
+        const n = empire.fleet[key] ?? 0;
+        if (n > 8) {
+          empire.fleet[key] = n - Math.max(1, Math.floor(n * 0.01));
         }
       }
     }
@@ -130,6 +169,16 @@ export function tryBuildShips(
 ): void {
   const capital = state.systems[empire.capitalSystemId];
   if (!capital || capital.credits < 20) return;
+  // Let young empires colonize before pouring treasury into hulls.
+  if (empire.ownedSystems.size < 5 && capital.credits < 55) return;
+
+  const yards = countShipyards(state, empire);
+  const support = fleetSupportCap(empire.ownedSystems.size, yards, {
+    livingMetal: empire.researched.has("living_metal"),
+    warMobilization: empire.researched.has("war_mobilization"),
+  });
+  const scale = fleetBuildScale(fleetPressure(empire.fleet, support));
+  if (scale <= 0.05) return;
 
   const prefs: MacroShipType[] = [];
   if (empire.archetype === "conqueror" || empire.traits.ambition > 0.7) {
@@ -164,14 +213,15 @@ export function tryBuildShips(
 
   for (const type of prefs) {
     if (!shipUnlockOk(empire, type)) continue;
-    const batch =
+    const batchBase =
       type === "dreadnought"
-        ? 2
+        ? 1
         : type === "battleship" || type === "carrier"
-          ? 5
+          ? 2
           : type === "cruiser" || type === "destroyer"
-            ? 15
-            : 40;
+            ? 4
+            : 10;
+    const batch = Math.max(1, Math.round(batchBase * scale));
     const cost = SHIP_STATS[type].creditCost * batch;
     if (capital.credits < cost) continue;
     if (rng() > 0.55 + empire.traits.aggression * 0.2) continue;

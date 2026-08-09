@@ -9,7 +9,7 @@ import type {
 } from "./types.js";
 import { MAX_PLANETARY_DEVS } from "./types.js";
 import { emit } from "./log.js";
-import { addShips, fleetPower } from "./ships.js";
+import { addShips, fleetBuildScale, fleetPower, fleetPressure, fleetSupportCap, SHIP_STATS } from "./ships.js";
 
 export const MACRO_TECH_IDS: readonly MacroTechId[] = [
   "industrial_foundries",
@@ -536,27 +536,75 @@ export function shipUnlockOk(empire: Empire, type: string): boolean {
 }
 
 export function applyShipyardPulse(state: MacroState, empire: Empire): void {
-  const living = empire.researched.has("living_metal") ? 1.5 : 1;
+  let yards = 0;
+  for (const sid of empire.ownedSystems) {
+    if (state.systems[sid]!.developments.has("shipyard_ring")) yards++;
+  }
+  const support = fleetSupportCap(empire.ownedSystems.size, yards, {
+    livingMetal: empire.researched.has("living_metal"),
+    warMobilization: empire.researched.has("war_mobilization"),
+  });
+  const living = empire.researched.has("living_metal") ? 1.2 : 1;
+
   for (const sid of empire.ownedSystems) {
     const s = state.systems[sid]!;
     if (!s.developments.has("shipyard_ring")) continue;
+
+    const pressure = fleetPressure(empire.fleet, support);
+    const scale = fleetBuildScale(pressure) * living;
+    if (scale <= 0.02) continue;
+
+    const pay = (cost: number): boolean => {
+      if (s.credits < cost) return false;
+      s.credits -= cost;
+      return true;
+    };
+
     if (empire.researched.has("capital_shipyards")) {
-      addShips(empire.fleet, "cruiser", Math.round(40 * living));
-      if (Math.floor(fleetPower(empire.fleet) / 2000) % 2 === 0) {
-        addShips(empire.fleet, "battleship", Math.round(8 * living));
+      const cruisers = Math.max(0, Math.round(6 * scale));
+      if (cruisers > 0 && pay(cruisers * SHIP_STATS.cruiser.creditCost * 0.55)) {
+        addShips(empire.fleet, "cruiser", cruisers);
+      }
+      if (
+        scale > 0.25 &&
+        Math.floor(state.tick / 20 + sid.length) % 2 === 0
+      ) {
+        const battleships = Math.max(0, Math.round(2 * scale));
+        if (
+          battleships > 0 &&
+          pay(battleships * SHIP_STATS.battleship.creditCost * 0.55)
+        ) {
+          addShips(empire.fleet, "battleship", battleships);
+        }
       }
       if (
         empire.researched.has("supercapital_frame") &&
-        Math.floor(state.tick / 30 + sid.length) % 3 === 0
+        scale > 0.35 &&
+        Math.floor(state.tick / 40 + sid.length) % 3 === 0
       ) {
-        addShips(empire.fleet, "dreadnought", Math.round(2 * living));
+        const dreads = Math.max(0, Math.round(1 * scale));
+        if (
+          dreads > 0 &&
+          pay(dreads * SHIP_STATS.dreadnought.creditCost * 0.55)
+        ) {
+          addShips(empire.fleet, "dreadnought", dreads);
+        }
       }
     } else {
-      addShips(empire.fleet, "corvette", Math.round(80 * living));
+      const corvettes = Math.max(0, Math.round(12 * scale));
+      if (
+        corvettes > 0 &&
+        pay(corvettes * SHIP_STATS.corvette.creditCost * 0.5)
+      ) {
+        addShips(empire.fleet, "corvette", corvettes);
+      }
     }
-    if (s.developments.has("hidden_arsenals")) {
-      addShips(empire.fleet, "raider", Math.round(40 * living));
-      addShips(empire.fleet, "corvette", Math.round(40 * living));
+    if (s.developments.has("hidden_arsenals") && scale > 0.15) {
+      const raiders = Math.max(0, Math.round(4 * scale));
+      if (raiders > 0 && pay(raiders * SHIP_STATS.raider.creditCost * 0.5)) {
+        addShips(empire.fleet, "raider", raiders);
+        addShips(empire.fleet, "corvette", Math.max(0, Math.round(3 * scale)));
+      }
     }
   }
 }

@@ -25,14 +25,14 @@ export interface ShipStats {
 }
 
 export const SHIP_STATS: Record<MacroShipType, ShipStats> = {
-  corvette: { creditCost: 1, power: 10, upkeep: 0.008 },
-  destroyer: { creditCost: 2, power: 24, upkeep: 0.012 },
-  cruiser: { creditCost: 4, power: 42, upkeep: 0.02 },
-  battleship: { creditCost: 8, power: 95, upkeep: 0.035 },
-  carrier: { creditCost: 10, power: 88, upkeep: 0.04 },
-  raider: { creditCost: 1, power: 16, upkeep: 0.01 },
-  dreadnought: { creditCost: 16, power: 280, upkeep: 0.045 },
-  defense_platform: { creditCost: 3, power: 50, upkeep: 0.015 },
+  corvette: { creditCost: 2, power: 10, upkeep: 0.022 },
+  destroyer: { creditCost: 4, power: 24, upkeep: 0.03 },
+  cruiser: { creditCost: 8, power: 42, upkeep: 0.045 },
+  battleship: { creditCost: 18, power: 95, upkeep: 0.07 },
+  carrier: { creditCost: 20, power: 88, upkeep: 0.075 },
+  raider: { creditCost: 3, power: 16, upkeep: 0.028 },
+  dreadnought: { creditCost: 36, power: 280, upkeep: 0.09 },
+  defense_platform: { creditCost: 6, power: 50, upkeep: 0.04 },
 };
 
 /** Soft rock-paper-scissors counters. */
@@ -82,6 +82,40 @@ export function fleetUpkeep(f: MacroFleetComposition): number {
     u += (f[t] ?? 0) * SHIP_STATS[t].upkeep * SHIP_STATS[t].creditCost;
   }
   return u;
+}
+
+/**
+ * Soft logistics ceiling — mature empires sit in the low tens of thousands of
+ * hulls, not tens of millions. Production and upkeep both key off this.
+ */
+export function fleetSupportCap(
+  ownedSystems: number,
+  shipyardCount: number,
+  extras: { livingMetal?: boolean; warMobilization?: boolean } = {},
+): number {
+  const systems = Math.max(1, ownedSystems);
+  const yards = Math.max(0, shipyardCount);
+  let cap = 180 + systems * 48 + yards * 160;
+  if (extras.warMobilization) cap *= 1.12;
+  if (extras.livingMetal) cap *= 1.1;
+  return Math.round(cap);
+}
+
+/** 0 = empty, 1 = at support, >1 = overstretched. */
+export function fleetPressure(
+  fleet: MacroFleetComposition,
+  supportCap: number,
+): number {
+  const cap = Math.max(1, supportCap);
+  return fleetCount(fleet) / cap;
+}
+
+/** Diminishing yield once fleets approach / exceed support. */
+export function fleetBuildScale(pressure: number): number {
+  if (pressure <= 0.55) return 1;
+  if (pressure >= 1.6) return 0;
+  if (pressure <= 1) return 1 / (1 + (pressure - 0.55) * 1.8);
+  return Math.max(0, 0.35 / (1 + (pressure - 1) * 4));
 }
 
 export function addShips(
@@ -222,11 +256,11 @@ export function defenseFromGarrison(
 ): MacroFleetComposition {
   const mix: MacroFleetComposition = {};
   const g = Math.max(0, garrison);
-  // ~40× denser local defense fleets vs the old /14–/70 conversion.
-  mix.corvette = Math.floor(g / 0.35);
-  mix.destroyer = Math.floor(g / 1.2);
-  mix.cruiser = Math.floor(g / 2.2);
-  if (platforms > 0) mix.defense_platform = platforms * 12;
+  // Local defense denser than v1, but not millions of virtual hulls.
+  mix.corvette = Math.floor(g / 3.5);
+  mix.destroyer = Math.floor(g / 12);
+  mix.cruiser = Math.floor(g / 22);
+  if (platforms > 0) mix.defense_platform = platforms * 3;
   if (fleetCount(mix) === 0 && g > 5) mix.corvette = 1;
   return mix;
 }
