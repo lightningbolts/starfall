@@ -178,6 +178,7 @@ export class MacroDashboard {
   private dirty = true;
   private elimUntil = 0;
   private elimRaf = 0;
+  private lastPauseToggleAt = 0;
   /** >0 while a pointer is down on the HUD — skip DOM rebuilds that cancel clicks. */
   private pointerDepth = 0;
   private lastMilitarySig = "";
@@ -318,6 +319,10 @@ export class MacroDashboard {
     this.root.querySelector("#ch-pause")?.addEventListener("pointerdown", (e) => {
       if ((e as PointerEvent).button !== 0) return;
       e.preventDefault();
+      e.stopPropagation();
+      const now = performance.now();
+      if (now - this.lastPauseToggleAt < 250) return;
+      this.lastPauseToggleAt = now;
       this.state.paused = !this.state.paused;
       this.changed();
     });

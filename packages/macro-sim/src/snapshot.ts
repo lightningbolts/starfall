@@ -21,6 +21,20 @@ export function buildSnapshot(state: MacroState): MacroSnapshot {
     };
   }
 
+  const committedByEmpire = new Map<string, number>();
+  for (const id of state.systemOrder) {
+    const eng = state.systems[id]!.engagement;
+    if (!eng) continue;
+    committedByEmpire.set(
+      eng.attackerId,
+      (committedByEmpire.get(eng.attackerId) ?? 0) + fleetPower(eng.committedA),
+    );
+    committedByEmpire.set(
+      eng.defenderId,
+      (committedByEmpire.get(eng.defenderId) ?? 0) + fleetPower(eng.committedB),
+    );
+  }
+
   const empires: MacroSnapshot["empires"] = {};
   for (const id of state.empireOrder) {
     const e = state.empires[id]!;
@@ -33,6 +47,9 @@ export function buildSnapshot(state: MacroState): MacroSnapshot {
       credits += s.credits;
       garrison += s.garrison;
     }
+    // Include ships currently committed to engagements so standings don't
+    // cliff-dive every time a battle opens.
+    const deployed = committedByEmpire.get(id) ?? 0;
     empires[id] = {
       name: e.name,
       colorHue: e.colorHue,
@@ -49,7 +66,7 @@ export function buildSnapshot(state: MacroState): MacroSnapshot {
       garrison,
       researched: [...e.researched],
       fleet: { ...e.fleet },
-      fleetPower: fleetPower(e.fleet),
+      fleetPower: fleetPower(e.fleet) + deployed,
       modifiers: { ...e.modifiers },
     };
   }

@@ -327,13 +327,13 @@ export const DEFAULT_MACRO_CONFIG: MacroConfig = {
   productionVariance: 0.14,
   systemCount: SYSTEM_COUNTS.medium,
   empireCount: empireCountForSystems(SYSTEM_COUNTS.medium),
-  eventChancePerTick: 0.02,
+  eventChancePerTick: 0.045,
   contestedFlipThreshold: 0.72,
   contestedDriftScale: 0.01,
   economyPulseTicks: 10,
   botCadenceTicks: 5,
   diplomacyCadenceTicks: 60,
-  maxClaimsPerPulse: 3,
+  maxClaimsPerPulse: 2,
 };
 
 export const MAX_PLANETARY_DEVS = 4;

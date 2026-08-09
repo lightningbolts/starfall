@@ -372,8 +372,8 @@ describe("createMacroMatch", () => {
     expect(ownedCount()).toBe(8);
     for (let i = 0; i < 100; i++) stepLogic(state, config);
     const early = ownedCount();
-    // Frontier should move — not stuck on homeworlds.
-    expect(early).toBeGreaterThan(40);
+    // Frontier should move — not stuck on homeworlds (early game is slower now).
+    expect(early).toBeGreaterThan(20);
     expect(Math.min(...empireSizes())).toBeGreaterThan(1);
 
     for (let i = 0; i < 100; i++) stepLogic(state, config);

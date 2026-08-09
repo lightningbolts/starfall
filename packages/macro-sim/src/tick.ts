@@ -39,11 +39,11 @@ export function stepLogic(state: MacroState, config: MacroConfig): StepResult {
       applyEconomyTick(system, empire, config, rng());
     }
     for (const eid of state.empireOrder) {
-      applyEmpireEconomyPulse(state, state.empires[eid]!);
+      const empire = state.empires[eid]!;
+      applyEmpireEconomyPulse(state, empire);
+      // Decay on economy pulses so modifiers last seconds/minutes, not blinks.
+      decayEmpireModifiers(empire);
     }
-  }
-  for (const eid of state.empireOrder) {
-    decayEmpireModifiers(state.empires[eid]!);
   }
 
   const botEvery = Math.max(1, config.botCadenceTicks);

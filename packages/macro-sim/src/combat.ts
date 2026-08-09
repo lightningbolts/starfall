@@ -56,8 +56,10 @@ export function setSystemOwner(
  */
 export function colonizeCost(empire: Empire): number {
   const owned = empire.ownedSystems.size;
-  // Soft curve: ~7 at 1 system, ~20 at 10, ~45 at 25, ~90 at 50.
-  return (6 + 1.05 * Math.pow(owned, 1.18)) * colonizeCostMult(empire);
+  // Early colonies are a real investment; mid-game softens then sprawl tax bites.
+  // ~11 at 1, ~18 at 5, ~28 at 12, ~55 at 30, ~95 at 50.
+  const earlyPremium = owned < 6 ? 4.5 : owned < 12 ? 2 : 0;
+  return (7 + earlyPremium + 1.15 * Math.pow(owned, 1.2)) * colonizeCostMult(empire);
 }
 
 /**
@@ -351,14 +353,14 @@ function tickEngagement(
     };
   } else {
     system.contested.pct = clamp01(
-      system.contested.pct + margin * config.contestedDriftScale * 8,
+      system.contested.pct + margin * config.contestedDriftScale * 4,
     );
   }
 
-  // Attrition bleeds into system garrison.
+  // Attrition bleeds lightly into system garrison.
   system.garrison = Math.max(
     4,
-    system.garrison * (1 - Math.abs(margin) * 0.02),
+    system.garrison * (1 - Math.abs(margin) * 0.008),
   );
   syncDefenseMix(system);
 
@@ -408,22 +410,22 @@ export function beginEngagement(
   if (!attacker?.alive || !defender?.alive) return null;
 
   const commitFrac =
-    mode === "skirmish" ? 0.12 : mode === "raid" ? 0.1 : mode === "siege" ? 0.35 : 0.28;
+    mode === "skirmish" ? 0.06 : mode === "raid" ? 0.05 : mode === "siege" ? 0.18 : 0.12;
   const pressure =
     attacker.modifiers.attackPressureTicksLeft > 0
       ? attacker.modifiers.attackPressure
       : 1;
-  const committedA = takeShips(attacker.fleet, commitFrac * Math.min(1.4, pressure));
+  const committedA = takeShips(attacker.fleet, commitFrac * Math.min(1.15, pressure));
   syncDefenseMix(system);
   const committedB = cloneFleet(system.defenseMix);
   // Pull some defender strategic fleet for non-raid.
   if (mode !== "raid") {
-    const reinf = takeShips(defender.fleet, mode === "siege" ? 0.2 : 0.15);
+    const reinf = takeShips(defender.fleet, mode === "siege" ? 0.1 : 0.07);
     Object.assign(committedB, mergeFleets(committedB, reinf));
   }
 
   if (fleetPower(committedA) < 8 && fleetPower(attacker.fleet) > 0) {
-    Object.assign(committedA, takeShips(attacker.fleet, 0.2));
+    Object.assign(committedA, takeShips(attacker.fleet, 0.08));
   }
 
   const totalPower = fleetPower(committedA) + fleetPower(committedB);

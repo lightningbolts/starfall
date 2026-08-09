@@ -25,18 +25,18 @@ interface WeightedKind {
 }
 
 const WORLD_EVENTS: WeightedKind[] = [
-  { kind: "production_surge", weight: 14 },
-  { kind: "rebellion", weight: 16 },
+  { kind: "production_surge", weight: 16 },
+  { kind: "rebellion", weight: 18 },
   { kind: "relic_discovery", weight: 10 },
-  { kind: "pirate_raid", weight: 16 },
-  { kind: "disaster", weight: 12 },
-  { kind: "offensive_blitz", weight: 14 },
+  { kind: "pirate_raid", weight: 14 },
+  { kind: "disaster", weight: 14 },
+  { kind: "offensive_blitz", weight: 16 },
   { kind: "defensive_stronghold", weight: 12 },
   { kind: "plague", weight: 12 },
   { kind: "robbery", weight: 10 },
   { kind: "tech_breakthrough", weight: 14 },
-  { kind: "coup", weight: 8 },
-  { kind: "territory_abandoned", weight: 11 },
+  { kind: "coup", weight: 10 },
+  { kind: "territory_abandoned", weight: 18 },
 ];
 
 export function maybeSpawnRandomEvent(
@@ -102,8 +102,8 @@ function applyWorldEvent(
 
   switch (kind) {
     case "production_surge": {
-      empire.modifiers.productionMult = 1.35 + rng() * 0.25;
-      empire.modifiers.productionTicksLeft = 40 + Math.floor(rng() * 40);
+      empire.modifiers.productionMult = 1.55 + rng() * 0.35;
+      empire.modifiers.productionTicksLeft = 18 + Math.floor(rng() * 22);
       return one(
         emit(state, {
           tick,
@@ -123,8 +123,8 @@ function applyWorldEvent(
       const canAbandon =
         system.id !== empire.capitalSystemId &&
         empire.ownedSystems.size > 2 &&
-        (system.garrison < 18 || rng() < 0.35);
-      if (canAbandon && rng() < 0.55) {
+        (system.garrison < 22 || rng() < 0.45);
+      if (canAbandon && rng() < 0.7) {
         const abandoned = abandonSystem(state, system, "rebellion");
         if (abandoned.length > 0) return abandoned;
       }
@@ -149,8 +149,8 @@ function applyWorldEvent(
     case "relic_discovery": {
       system.credits += 80 + rng() * 120;
       system.population += 40;
-      empire.modifiers.garrisonMult = 1.2;
-      empire.modifiers.garrisonTicksLeft = 50;
+      empire.modifiers.garrisonMult = 1.35;
+      empire.modifiers.garrisonTicksLeft = 20;
       return one(
         emit(state, {
           tick,
@@ -204,8 +204,8 @@ function applyWorldEvent(
       );
     }
     case "offensive_blitz": {
-      empire.modifiers.attackPressure = 1.45 + rng() * 0.3;
-      empire.modifiers.attackPressureTicksLeft = 30 + Math.floor(rng() * 30);
+      empire.modifiers.attackPressure = 1.65 + rng() * 0.4;
+      empire.modifiers.attackPressureTicksLeft = 14 + Math.floor(rng() * 16);
       let borders = 0;
       for (const sid of empire.ownedSystems) {
         if (borders >= 2) break;
@@ -236,8 +236,8 @@ function applyWorldEvent(
     case "defensive_stronghold": {
       system.garrison *= 1.8;
       system.garrison += 40;
-      empire.modifiers.garrisonMult = 1.35;
-      empire.modifiers.garrisonTicksLeft = 45;
+      empire.modifiers.garrisonMult = 1.5;
+      empire.modifiers.garrisonTicksLeft = 18;
       if (!system.developments.has("fortress_complex") && system.developments.size < 4) {
         system.developments.add("orbital_batteries");
       }
@@ -328,10 +328,10 @@ function applyWorldEvent(
           }),
         );
       }
-      empire.modifiers.productionMult = 1.4;
-      empire.modifiers.productionTicksLeft = 60;
-      empire.modifiers.garrisonMult = 1.25;
-      empire.modifiers.garrisonTicksLeft = 60;
+      empire.modifiers.productionMult = 1.55;
+      empire.modifiers.productionTicksLeft = 22;
+      empire.modifiers.garrisonMult = 1.4;
+      empire.modifiers.garrisonTicksLeft = 22;
       return one(
         emit(state, {
           tick,
@@ -359,8 +359,8 @@ function applyWorldEvent(
           other.allies = other.allies.filter((a) => a !== empire.id);
         }
       }
-      empire.modifiers.productionMult = 0.55;
-      empire.modifiers.productionTicksLeft = 35;
+      empire.modifiers.productionMult = 0.45;
+      empire.modifiers.productionTicksLeft = 16;
       const capital = state.systems[empire.capitalSystemId]!;
       capital.garrison *= 0.7;
       capital.population *= 0.85;
@@ -395,8 +395,18 @@ function applyWorldEvent(
           }),
         );
       }
-      const abandoned = abandonSystem(state, target, "withdraw");
-      if (abandoned.length > 0) return abandoned;
+      const events = abandonSystem(state, target, "withdraw");
+      // Overextended empires sometimes shed a second fringe world in the same shock.
+      if (
+        events.length > 0 &&
+        empire.ownedSystems.size > 14 &&
+        fringe.length > 1 &&
+        rng() < 0.45
+      ) {
+        const second = fringe.find((s) => s.ownerId === empire.id);
+        if (second) events.push(...abandonSystem(state, second, "withdraw"));
+      }
+      if (events.length > 0) return events;
       return one(
         emit(state, {
           tick,

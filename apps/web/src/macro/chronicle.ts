@@ -173,6 +173,7 @@ export function startChronicle(
 
   let raf = 0;
   let stopped = false;
+  let wasPaused = false;
 
   const frame = (now: number): void => {
     if (stopped) return;
@@ -182,6 +183,11 @@ export function startChronicle(
     const interval = cfg.logicIntervalMs / st.speed;
 
     if (!st.paused && next.status === "running") {
+      if (wasPaused) {
+        // Resume from a clean phase so we don't inherit a wrapped pause offset.
+        logicStartedAt = now;
+        wasPaused = false;
+      }
       if (now - logicStartedAt >= interval) {
         prev = next;
         const result = stepLogic(sim, cfg);
@@ -214,10 +220,12 @@ export function startChronicle(
         logicStartedAt = now;
       }
     } else if (st.paused) {
-      logicStartedAt = now - ((now - logicStartedAt) % interval);
+      wasPaused = true;
     }
 
-    const rawT = Math.min(1, (now - logicStartedAt) / interval);
+    // While paused, pin to the latest snapshot — wrapping the lerp phase made
+    // contested fronts and power figures flicker between two states.
+    const rawT = st.paused ? 1 : Math.min(1, (now - logicStartedAt) / interval);
     const view = lerpSnapshot(prev, next, rawT, easeInOutCubic);
 
     map.render(view, {

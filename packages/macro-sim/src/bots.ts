@@ -50,20 +50,24 @@ function decideMilitary(
   const withdrawn = maybeWithdraw(state, empire, rng);
   if (withdrawn.length) events.push(...withdrawn);
 
-  // Colonize first while wilderness remains — research/ships used to starve the frontier.
+  // Colonize first while wilderness remains — early game is slower on purpose.
+  const early = empire.ownedSystems.size < 6;
   const expandChance =
-    (isolation ? 0.45 : 0.72) +
-    empire.traits.aggression * 0.12 +
-    empire.traits.ambition * 0.22 +
-    empire.traits.risk * 0.06 +
-    (small ? 0.2 : 0) -
+    (isolation ? 0.32 : 0.55) +
+    empire.traits.aggression * 0.1 +
+    empire.traits.ambition * 0.18 +
+    empire.traits.risk * 0.05 +
+    (small && !early ? 0.12 : 0) -
+    (early ? 0.12 : 0) -
     (empire.archetype === "technocrat" ? 0.05 : 0);
 
   if (frontier.length > 0 && rng() < expandChance) {
     let claims = 0;
-    const maxClaims = small
-      ? Math.max(config.maxClaimsPerPulse, 3)
-      : config.maxClaimsPerPulse;
+    const maxClaims = early
+      ? 1
+      : small
+        ? Math.max(config.maxClaimsPerPulse, 2)
+        : config.maxClaimsPerPulse;
     const pool = [...frontier];
     while (claims < maxClaims && pool.length > 0) {
       const idx = Math.floor(rng() * pool.length);
@@ -211,13 +215,14 @@ function maybeWithdraw(
 
   const isolation =
     empire.archetype === "isolationist" || empire.archetype === "cautious";
-  const overextended = size > 22;
+  const overextended = size > 18;
   const chance =
-    (isolation ? 0.12 : 0.04) +
-    (overextended ? 0.1 : 0) +
-    empire.traits.xenophobia * 0.04 -
-    empire.traits.ambition * 0.05;
-  if (rng() > Math.max(0.02, chance)) return [];
+    (isolation ? 0.22 : 0.08) +
+    (overextended ? 0.18 : 0) +
+    (size > 30 ? 0.12 : 0) +
+    empire.traits.xenophobia * 0.06 -
+    empire.traits.ambition * 0.04;
+  if (rng() > Math.max(0.04, chance)) return [];
 
   let bestId: SystemId | null = null;
   let bestScore = Infinity;

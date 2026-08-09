@@ -166,9 +166,9 @@ export function resolveCombatTick(
     return { a: scaleCompositionToPower(a, aBase * (1 - f * 0.15)), b: emptyFleet() };
   }
 
-  // Mutual damage proportional to enemy effective power.
-  const aLossFrac = Math.min(0.95, (bEff / (aEff + bEff)) * f * 1.1);
-  const bLossFrac = Math.min(0.95, (aEff / (aEff + bEff)) * f * 1.1);
+  // Mutual damage — keep close fights from vaporizing both fleets each tick.
+  const aLossFrac = Math.min(0.35, (bEff / (aEff + bEff)) * f * 0.45);
+  const bLossFrac = Math.min(0.35, (aEff / (aEff + bEff)) * f * 0.45);
   return {
     a: scaleCompositionToPower(a, aBase * (1 - aLossFrac)),
     b: scaleCompositionToPower(b, bBase * (1 - bLossFrac)),
@@ -181,13 +181,14 @@ export function scaleCompositionToPower(
 ): MacroFleetComposition {
   const current = fleetPower(comp);
   if (current <= 0 || targetPower <= 0) return emptyFleet();
+  // Soft floor — avoid wiping a close fight with integer truncation alone.
   const scale = Math.min(1, targetPower / current);
   const out: MacroFleetComposition = {};
   for (const t of MACRO_SHIP_TYPES) {
     const n = comp[t] ?? 0;
     if (n <= 0) continue;
-    const next = Math.floor(n * scale);
-    if (next > 0) out[t] = next;
+    const next = n * scale >= 1 ? Math.max(1, Math.round(n * scale)) : 0;
+    if (next > 0) out[t] = Math.min(n, next);
   }
   // Keep at least one ship if any power remains and flooring wiped everything.
   if (fleetCount(out) === 0 && targetPower > SHIP_STATS.corvette.power * 0.5) {
